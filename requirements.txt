@@ -1,0 +1,12 @@
+easyocr
+streamlit
+Pillow
+mmcv-full
+mmdet
+mmocr
+paddleocr
+paddlepaddle
+mycolorpy
+plotly
+plotly-express
+opencv-python-headless==4.1.2.30
