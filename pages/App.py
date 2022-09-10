@@ -122,8 +122,6 @@ def init_readers(list_params):
 def load_image(image_file):
     image_path = "img."+image_file.name.split('.')[-1]
     img = Image.open(image_file)
-    with open(image_file.name, 'wb') as f:
-        f.write(image_file.read())
     
     img_saved = img.save(image_path)
 
