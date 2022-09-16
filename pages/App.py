@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.express as px
 import numpy as np
 import pandas as pd
-import time
+import torch
 
 import cv2
 from PIL import Image, ImageDraw
@@ -20,11 +20,11 @@ def convert_df(df):
     return df.to_csv().encode('utf-8')
 
 
-@st.cache
+@st.cache(show_spinner=False)
 def initializations():
     # the readers considered
-    reader_type_list = ['EasyOCR', 'PPOCR']
-    reader_type_dict = {'EasyOCR': 0, 'PPOCR': 1}
+    reader_type_list = ['EasyOCR', 'PPOCR', 'MMOCR']
+    reader_type_dict = {'EasyOCR': 0, 'PPOCR': 1, 'MMOCR': 2}
 
     # Columns for recognition details results
     cols_size = [2] + [2,1]*len(reader_type_list)
@@ -75,12 +75,17 @@ def initializations():
     'Uzbek': 'uz', 'Vietnamese': 'vi', 'Welsh': 'cy',
     }
 
-    list_dict_lang = [dict_lang_easyocr, dict_lang_ppocr]
+    dict_lang_mmocr = {'English & Chinese': 'en'}
+
+    list_dict_lang = [dict_lang_easyocr, dict_lang_ppocr, dict_lang_mmocr]
 
     # Initialization of detection form
-    st.session_state.columns_size = [1 for x in reader_type_list]
-    st.session_state.column_width = [400 for x in reader_type_list]
-    st.session_state.columns_color = ["rgb(0,0,0)" for x in reader_type_list]
+    if 'columns_size' not in st.session_state:
+        st.session_state.columns_size = [1 for x in reader_type_list]
+    if 'column_width' not in st.session_state:
+        st.session_state.column_width = [400 for x in reader_type_list]
+    if 'columns_color' not in st.session_state:
+        st.session_state.columns_color = ["rgb(0,0,0)" for x in reader_type_list]
 
     # Confidence color scale
     list_confid = list(np.arange(0,101,1))
@@ -101,19 +106,44 @@ def initializations():
     return reader_type_list, reader_type_dict, color, list_dict_lang, cols_size, dict_back_colors, fig
 ###
 @st.cache(show_spinner=False)
+def init_easyocr(params):
+    ocr = easyocr.Reader(params)
+    return ocr
+
+###
+@st.cache(show_spinner=False)
+def init_ppocr(params):
+    ocr = PaddleOCR(lang=params[0],
+                    **params[1]
+                   )
+    return ocr
+
+###
+@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None}, \
+          allow_output_mutation=True)
+def init_mmocr(params):
+    ocr = MMOCR(recog=None, **params[1])
+    return ocr
+
+###
+#@st.cache(show_spinner=False, allow_output_mutation=True, hash_funcs={torch.nn.parameter.Parameter: lambda _: None})
 def init_readers(list_params):
 
     # Instantiations of the readers :
     # - EasyOCR
-    reader_easyocr = easyocr.Reader([list_params[0][0]])
+    with st.spinner("EasyOCR reader initialization in progress ..."):
+        reader_easyocr = init_easyocr([list_params[0][0]])
 
     # - PPOCR
-    # Paddleocr 
-    reader_ppocr = PaddleOCR(lang=list_params[1][0],
-                             **list_params[1][1]
-                           )
+    # Paddleocr
+    with st.spinner("PPOCR reader initialization in progress ..."):
+        reader_ppocr = init_ppocr(list_params[1])
 
-    list_readers = [reader_easyocr, reader_ppocr]
+    # - MMOCR
+    with st.spinner("MMOCR reader initialization in progress ..."):
+        reader_mmocr = init_mmocr(list_params[2])
+
+    list_readers = [reader_easyocr, reader_ppocr, reader_mmocr]
 
     return list_readers
 
@@ -122,7 +152,7 @@ def init_readers(list_params):
 def load_image(image_file):
     image_path = "img."+image_file.name.split('.')[-1]
     img = Image.open(image_file)
-    
+
     img_saved = img.save(image_path)
 
     # Read image
@@ -130,31 +160,57 @@ def load_image(image_file):
     image_cv2 = cv2.imread(image_path)
     return image_path, image_orig, image_cv2
 
-
 ###
-def process_detect(image_path, list_images, list_readers, list_params):
-
-    ## ------- EasyOCR Text detection
-
-    easyocr_coordinates = text_detect('easyocr', list_readers[0], image_path, list_params[0][1])
+@st.cache(show_spinner=False)
+def easyocr_detect(reader, image_path, params):
+    easyocr_coordinates = text_detect('easyocr', reader, image_path, params[1])
     # The format of the coordinate is as follows: [x_min, x_max, y_min, y_max]
-
     # Format boxes coordinates for draw
     easyocr_boxes_coordinates = list(map(easyocr_coord_convert, easyocr_coordinates))
 
-    # Visualization
-    easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, color, 'None', 7)
+    return easyocr_boxes_coordinates
+
+###
+@st.cache(show_spinner=False)
+def ppocr_detect(reader, image_path, params):
+    ppocr_boxes_coordinates = text_detect('ppocr', reader, image_path, params)
+
+    return ppocr_boxes_coordinates
+
+###
+@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None})
+def mmocr_detect(reader, image_path, params):
+    mmocr_boxes_coordinates = text_detect('mmocr', reader, image_path, params)
+
+    return mmocr_boxes_coordinates
+
+###
+def process_detect(image_path, list_images, list_readers, list_params, color):
+
+    ## ------- EasyOCR Text detection
+    with st.spinner('EasyOCR Text detection in progress ...'):
+        easyocr_boxes_coordinates = easyocr_detect(list_readers[0], image_path, list_params[0])
+        # Visualization
+        easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, color, 'None', 7)
+    ##
 
     ## ------- PPOCR Text detection
+    with st.spinner('PPOCR Text detection in progress ...'):
+        ppocr_boxes_coordinates = ppocr_detect(list_readers[1], image_path, {})
+        # Visualization
+        ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, color, 'None', 7)
+    ##
 
-    ppocr_boxes_coordinates = text_detect('ppocr', list_readers[1], image_path, {})
-
-    # Visualization
-    ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, color, 'None', 7)
+    ## ------- MMOCR Text detection
+    with st.spinner('MMOCR Text detection in progress ...'):
+        mmocr_boxes_coordinates = mmocr_detect(list_readers[2], image_path, {})
+        # Visualization
+        mmocr_image_detect = draw_detected(list_images[0], mmocr_boxes_coordinates, color, 'None', 7)
+    ##
 
     #
-    list_images += [easyocr_image_detect, ppocr_image_detect]
-    list_coordinates = [easyocr_boxes_coordinates, ppocr_boxes_coordinates]
+    list_images += [easyocr_image_detect, ppocr_image_detect, mmocr_image_detect]
+    list_coordinates = [easyocr_boxes_coordinates, ppocr_boxes_coordinates, mmocr_boxes_coordinates]
     #
 
     return list_images, list_coordinates
@@ -172,27 +228,49 @@ def text_detect(reader_type, reader, image_path, dict_param):
         # Generally, you provide the factor >1 to enlarge and <1 to compress the image (default ratio is 1).
 
         detection_result = reader.detect(image_path,
-                                         #width_ths=0.7, 
+                                         #width_ths=0.7,
                                          #mag_ratio=1.5
                                          **dict_param
                                         )
         boxes_coordinates = detection_result[0][0]
-        
+
     elif reader_type == 'ppocr':
-        # PPOCR detection method        
+        # PPOCR detection method
         boxes_coordinates = reader.ocr(image_path, rec=False)
-    
+
+    elif reader_type == 'mmocr':
+        # MMOCR detection method
+        det_result = reader.readtext(image_path, details=True)
+        bboxes_list = [res['boundary_result'] for res in det_result]
+        boxes_coordinates = []
+        for bboxes in bboxes_list:
+            for bbox in bboxes:
+                box = bbox[:8]
+                if len(bbox) > 9:
+                    min_x = min(bbox[0:-1:2])
+                    min_y = min(bbox[1:-1:2])
+                    max_x = max(bbox[0:-1:2])
+                    max_y = max(bbox[1:-1:2])
+                    #box = [min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y]
+                else:
+                    min_x = min(bbox[0:-1:2])
+                    min_y = min(bbox[1::2])
+                    max_x = max(bbox[0:-1:2])
+                    max_y = max(bbox[1::2])
+                box4 = [ [min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y] ]
+                boxes_coordinates.append(box4)
+
     return boxes_coordinates
 
 ###
 def draw_detected(image, boxes_coordinates, color, posit='None', thickness=4):
-# Input  : boxes coordinates, from top to bottom and from left to right 
+# Input  : boxes coordinates, from top to bottom and from left to right
 #          [ [ [x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max] ],
 #            [ ...                                                            ]
-#          ]  
+#          ]
 # Return : image with detected zones
     font = cv2.FONT_HERSHEY_SIMPLEX
-    for i, box in enumerate(boxes_coordinates):        
+    for i, box in enumerate(boxes_coordinates):
         box = np.reshape(np.array(box), [-1, 1, 2]).astype(np.int64)
         image = cv2.polylines(np.array(image), [box], True, color, thickness)
         if posit != 'None':
@@ -201,7 +279,7 @@ def draw_detected(image, boxes_coordinates, color, posit='None', thickness=4):
             elif posit == 'top_right':
                 pos = tuple(box[1][0])
             image = cv2.putText(image,str(i+1), pos, font, 5.5,color,thickness,cv2.LINE_AA)
-    
+
     image_drawn = Image.fromarray(image)
 
     return image_drawn
@@ -216,42 +294,97 @@ def easyocr_coord_convert(list_coord):
     c = list_coord
     return [ [c[0], c[2]], [c[1], c[2]], [c[1], c[3]], [c[0], c[3]] ]
 
-###
-def text_recognize(list_readers, image_cv, boxes_coordinates, list_dict_params, dict_back_colors):
-    df_results = pd.DataFrame([])
+##
+@st.cache(show_spinner=False)
+def get_cropped(boxes_coordinates, image_cv):
     list_images = []
-    list_text_easyocr = []
-    list_confidence_easyocr = []
-    list_text_ppocr = []
-    list_confidence_ppocr = []
-
-    reader_easyocr = list_readers[0]
-    reader_ppocr = PaddleOCR(**list_dict_params[1])
-
     for box in boxes_coordinates:
         box_ar = np.array(box).astype(np.int64)
-        #x_min = np.array(box_ar)[:, 0].min()
-        #x_max = np.array(box_ar)[:, 0].max()
-        #y_min = np.array(box_ar)[:, 1].min()
-        #y_max = np.array(box_ar)[:, 1].max()
         x_min = box_ar[:, 0].min()
         x_max = box_ar[:, 0].max()
         y_min = box_ar[:, 1].min()
         y_max = box_ar[:, 1].max()
         cropped = image_cv[y_min:y_max, x_min:x_max]
         list_images.append(cropped)
-        
-        # recognize with EasyOCR        
-        #result = reader.readtext(cropped, **list_dict_params[0])
-        result = reader_easyocr.recognize(cropped, **list_dict_params[0])
+    return list_images
+
+###
+def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, dict_back_colors):
+    df_results = pd.DataFrame([])
+
+    list_text_easyocr = []
+    list_confidence_easyocr = []
+    list_text_ppocr = []
+    list_confidence_ppocr = []
+    list_text_mmocr = []
+    list_confidence_mmocr = []
+
+    # 1. Create cropped images from detection
+    list_images = get_cropped(boxes_coordinates, image_cv)
+
+    # 2. recognize with EasyOCR
+    with st.spinner('EasyOCR Text recognition in progress ...'):
+        list_text_easyocr, list_confidence_easyocr = easyocr_recog(list_images, list_readers[0], \
+                                                                   list_dict_params[0])
+    ##
+
+    # 3. recognize with PPOCR
+    with st.spinner('PPOCR Text recognition in progress ...'):
+        list_text_ppocr, list_confidence_ppocr = ppocr_recog(list_images, list_dict_params[1])
+    ##
+
+    # 4. recognize with MMOCR
+    with st.spinner('MMOCR Text recognition in progress ...'):
+        list_text_mmocr, list_confidence_mmocr = mmocr_recog(list_images, list_dict_params[2])
+    ##
+
+    # 5. create results data frame
+    df_results = pd.DataFrame({'cropped_image': list_images,
+                               'text_easyocr': list_text_easyocr,
+                               'confidence_easyocr': list_confidence_easyocr,
+                               'text_ppocr': list_text_ppocr,
+                               'confidence_ppocr': list_confidence_ppocr,
+                               'text_mmocr': list_text_mmocr,
+                               'confidence_mmocr': list_confidence_mmocr
+                              }
+                             )
+
+    # 6. Draw images with results
+    list_reco_images = draw_reco_images(image_cv, boxes_coordinates, \
+                                        [list_text_easyocr, list_text_ppocr, list_text_mmocr], \
+                                        [list_confidence_easyocr, list_confidence_ppocr, list_confidence_mmocr], \
+                                        dict_back_colors)
+
+    return df_results, list_reco_images
+
+##
+@st.cache(show_spinner=False)
+def easyocr_recog(list_images, reader_easyocr, params):
+    ## ------- EasyOCR Text recognition
+    list_text_easyocr = []
+    list_confidence_easyocr = []
+    progress_bar = st.progress(0)
+    for cropped in list_images:
+        result = reader_easyocr.recognize(cropped, **params)
         try:
             list_text_easyocr.append(result[0][1])
             list_confidence_easyocr.append(np.round(100*result[0][2], 1))
         except:
             list_text_easyocr.append('Not recognize')
             list_confidence_easyocr.append(100.)
+        progress_bar.progress((i+1)/len(list_images))
 
-        # recognize with PPOCR        
+    return list_text_easyocr, list_confidence_easyocr
+
+##
+@st.cache(show_spinner=False)
+def ppocr_recog(list_images, params):
+    ## ------- PPOCR Text recognition
+    list_text_ppocr = []
+    list_confidence_ppocr = []
+    reader_ppocr = PaddleOCR(**params)
+    progress_bar = st.progress(0)
+    for cropped in list_images:
         result = reader_ppocr.ocr(cropped, det=False, cls=False)
         try:
             list_text_ppocr.append(result[0][0])
@@ -259,23 +392,30 @@ def text_recognize(list_readers, image_cv, boxes_coordinates, list_dict_params, 
         except:
             list_text_ppocr.append('Not recognize')
             list_confidence_ppocr.append(100.)
+        progress_bar.progress((i+1)/len(list_images))
 
+    return list_text_ppocr, list_confidence_ppocr
 
-    df_results = pd.DataFrame({'cropped_image': list_images,
-                               'text_easyocr': list_text_easyocr,
-                               'confidence_easyocr': list_confidence_easyocr,
-                               'text_ppocr': list_text_ppocr,
-                               'confidence_ppocr': list_confidence_ppocr
-                              }
-                             )
+##
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def mmocr_recog(list_images, params):
+    ## ------- MMOCR Text recognition
+    list_text_mmocr = []
+    list_confidence_mmocr = []
+    reader_mmocr = MMOCR(det=None, **params)
+    progress_bar = st.progress(0)
+    for i, cropped in enumerate(list_images):
+        result = reader_mmocr.readtext(cropped, details=True)
+        try:
+            list_text_mmocr.append(result[0]['text'])
+            list_confidence_mmocr.append(np.round(100*(np.array(result[0]['score']).mean()), 1))
+        except:
+            list_text_mmocr.append('Not recognize')
+            list_confidence_mmocr.append(100.)
+        progress_bar.progress((i+1)/len(list_images))
 
-    # Draw images with results
-    list_reco_images = draw_reco_images(image_cv, boxes_coordinates, \
-                                        [list_text_easyocr, list_text_ppocr], \
-                                        [list_confidence_easyocr, list_confidence_ppocr], \
-                                        dict_back_colors)
-
-    return df_results, list_reco_images
+    return list_text_mmocr, list_confidence_mmocr
 
 ###
 def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_back_colors, \
@@ -283,10 +423,10 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
     img = image
     nb_readers = len(list_texts)
     list_reco_images = [img.copy() for i in range(nb_readers)]
-    
+
     for num, box_ in enumerate(boxes_coordinates):
         box = np.array(box_).astype(np.int64)
-        
+
         # For each box : draw the results of each recognizer
         for i in range(nb_readers):
             confid = np.round(list_confid[i][num], 0)
@@ -312,34 +452,38 @@ def update_font_scale(nb_col, dict_draw_reco):
     with show_reco.container():
         reco_columns = st.columns(nb_col, gap='medium')
         column_width = 400
-        for i, col in enumerate(reco_columns):                
+        for i, col in enumerate(reco_columns):
             column_title = '<p style="font-size: 20px;color:rgb(0,0,0);">Recognition with ' + \
                             reader_type_list[i]+ '</p>'
             col.markdown(column_title, unsafe_allow_html=True)
-            col.image(list_reco_images[i], width=column_width, use_column_width=True)  
+            col.image(list_reco_images[i], width=column_width, use_column_width=True)
 
 
 
 ####################################################################################################
-##   MAIN 
+##   MAIN
 ####################################################################################################
 
 ##----------- Initializations -----------------------------------------------------------------------
 
 
 st.title("OCR solutions comparator")
-st.markdown("##### EasyOCR, PPOCR")
+st.markdown("##### *EasyOCR, PPOCR, MMOCR*")
 
 # Initializations
-reader_type_list, reader_type_dict, color, list_dict_lang, cols_size, dict_back_colors, fig_colorscale = initializations()
+with st.spinner("Initializations in progress ..."):
+    reader_type_list, reader_type_dict, color, list_dict_lang, \
+        cols_size, dict_back_colors, fig_colorscale = initializations()
 
 ##----------- Choose language & image -----------------------------------------------------------------
 st.markdown("#### Choose languages for the text recognition")
-lang_col = st.columns(2)
+lang_col = st.columns(3)
 easyocr_key_lang = lang_col[0].selectbox(reader_type_list[0]+" :", list_dict_lang[0].keys(), 26)
 easyocr_lang = list_dict_lang[0][easyocr_key_lang]
 ppocr_key_lang = lang_col[1].selectbox(reader_type_list[1]+" :", list_dict_lang[1].keys(), 22)
 ppocr_lang = list_dict_lang[1][ppocr_key_lang]
+mmocr_key_lang = lang_col[2].selectbox(reader_type_list[2]+" :", list_dict_lang[2].keys(), 0)
+mmocr_lang = list_dict_lang[2][mmocr_key_lang]
 
 image_file = st.file_uploader("Upload image", type=["png","jpg","jpeg"])
 
@@ -394,7 +538,7 @@ This is important for language with complex script (E.g. Thai).''')
 
             with tabs[1]:
                 t1_det_algorithm = st.selectbox('det_algorithm', ['DB'], \
-                		help='Type of detection algorithm selected. (default = DB)')		
+                		help='Type of detection algorithm selected. (default = DB)')
                 t1_det_max_side_len = st.slider('det_max_side_len', 500, 2000, 960, step=10, \
                         help='''The maximum size of the long side of the image. (default = 960)\n
 Limit the maximum image height and width.\n
@@ -422,6 +566,15 @@ Boxes score lower than this value will be discarded.''')
                         to calculate. (default = fast) \n
 Use rectangular box to calculate faster, and polygonal box more accurate for curved text area.''')
 
+            with tabs[2]:
+                t2_det = st.selectbox('det', ['DB_r18','DB_r50','DBPP_r50','DRRG', \
+                            'FCE_IC15','FCE_CTW_DCNv2','MaskRCNN_CTW','MaskRCNN_IC15','MaskRCNN_IC17', \
+                            'PANet_CTW','PANet_IC15','PS_CTW','PS_IC15','Tesseract','TextSnake'], 10, \
+                		help='Text detection algorithm. (default = PANet_IC15)')
+                st.write("###### *More about text detection models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textdet_models.html)")
+                t2_merge_xdist = st.slider('merge_xdist', 1, 50, 20, step=1, \
+                        help='The maximum x-axis distance to merge boxes. (defaut=20)')
+
 
         submit_detect = st.form_submit_button("Launch detection")
 
@@ -442,22 +595,27 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                         'det_db_thresh': t1_det_db_thresh, 'det_db_box_thresh': t1_det_db_box_thresh, \
                         'det_db_unclip_ratio': t1_det_db_unclip_ratio, 'det_east_score_thresh': t1_det_east_score_thresh, \
                         'det_east_cover_thresh': t1_det_east_cover_thresh, 'det_east_nms_thresh': t1_det_east_nms_thresh, \
-                        'det_db_score_mode': t1_det_db_score_mode}]
+                        'det_db_score_mode': t1_det_db_score_mode}],
+                        [mmocr_lang, {'det': t2_det, 'merge_xdist': t2_merge_xdist}]
                         ]
-        with st.spinner("Readers initializations in progress (it may take a while) ..."):
-            list_readers = init_readers(list_params_det)
 
-        with st.spinner("Detection in progress ..."):
-            list_images, list_coordinates = process_detect(image_path, list_images, \
-                                                            list_readers, list_params_det)
-            if 'list_readers' not in st.session_state:
-                st.session_state.list_readers = list_readers
-            if 'list_coordinates' not in st.session_state:
-                st.session_state.list_coordinates = list_coordinates
-            if 'list_images' not in st.session_state:
-                st.session_state.list_images = list_images
-            if 'list_params_det' not in st.session_state:
-                st.session_state.list_params_det = list_params_det
+        show_info1 = st.empty()
+        show_info1.info("Readers initializations in progress (it may take a while) ...")
+        list_readers = init_readers(list_params_det)
+
+        show_info1.info("Text detection in progress ...")
+        list_images, list_coordinates = process_detect(image_path, list_images, \
+                                                       list_readers, list_params_det, color)
+        show_info1.empty()
+
+        if 'list_readers' not in st.session_state:
+            st.session_state.list_readers = list_readers
+        if 'list_coordinates' not in st.session_state:
+            st.session_state.list_coordinates = list_coordinates
+        if 'list_images' not in st.session_state:
+            st.session_state.list_images = list_images
+        if 'list_params_det' not in st.session_state:
+            st.session_state.list_params_det = list_params_det
 
     if 'list_coordinates' in st.session_state:
         list_coordinates = st.session_state.list_coordinates
@@ -533,10 +691,18 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                         help="Filter the output by score (from the recognition model), and those below \
                         this score will not be returned. (default=0.5)")
 
+                with tabs[2]:
+                    t2_recog = st.selectbox('recog', ['ABINet','CRNN','CRNN_TPS','MASTER', \
+                                  'NRTR_1/16-1/8','NRTR_1/8-1/4','RobustScanner','SAR','SAR_CN', \
+                                  'SATRN','SATRN_sm','SEG','Tesseract'], 7, \
+                            help='Text recognition algorithm. (default = SAR)')
+                    st.write("###### *More about text recognition models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textrecog_models.html)")
+
             submit_reco = st.form_submit_button("Launch recognition")
 
         if submit_reco:
 ##----------- Hightlight the detecter --------------------------------------
+            show_detect.empty()
             with show_detect.container():
                 columns_size = [1 for x in reader_type_list]
                 column_width  = [400 for x in reader_type_list]
@@ -569,12 +735,19 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                                'rec_batch_num': t1_rec_batch_num, 'max_text_length': t1_max_text_length, \
                                 'use_space_char': t1_use_space_char, 'drop_score': t1_drop_score}, \
                                 **{'lang': list_params_det[1][0]}
-                               } 
+                               },
+                               {'recog': t2_recog}
                               ]
 
-            with st.spinner("Recognition in progress ..."):
-                df_results, list_reco_images = text_recognize(list_readers, list_images[1], \
-                                                              list_boxes, list_params_rec, dict_back_colors)
+            show_info2 = st.empty()
+
+            with show_info2.container():
+                st.info("Text recognition in progress ...")
+                df_results, list_reco_images = process_recog(list_readers, list_images[1], \
+                                                             list_boxes, list_params_rec, \
+                                                             dict_back_colors)
+            show_info2.empty()
+
             st.session_state.df_results = df_results
             st.session_state.list_reco_images = list_reco_images
             st.session_state.list_boxes = list_boxes
@@ -599,21 +772,21 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                 st.plotly_chart(fig_colorscale, use_container_width=True)
 
                 col_font, col_threshold = st.columns(2)
-            
+
                 col_font.slider('Font scale', 1, 7, 4, step=1, key="font_scale_sld")
                 col_threshold.slider('% confidence threshold for text color change', 40, 100, 64, \
                                      step=1, key="conf_threshold_sld")
                 col_threshold.write("(text color is black below this % confidence threshold, and white above)")
-            
+
                 with show_reco.container():
                     reco_columns = st.columns(len(reader_type_list), gap='medium')
                     column_width = 400
-                    for i, col in enumerate(reco_columns):                
+                    for i, col in enumerate(reco_columns):
                         column_title = '<p style="font-size: 20px;color:rgb(0,0,0);">Recognition with ' + \
                                         reader_type_list[i]+ '</p>'
                         col.markdown(column_title, unsafe_allow_html=True)
                         col.image(st.session_state.list_reco_images[i], width=column_width, use_column_width=True)
-                
+
                 submit_resize = st.form_submit_button("Refresh")
 
             if submit_resize:
@@ -633,3 +806,10 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                     for i in range(1, len(cols), 2):
                         cols[i].write(getattr(row, results_cols[i]))
                         cols[i+1].write("("+str(getattr(row, results_cols[i+1]))+"%)")
+
+                st.download_button(
+                    label="Download results as CSV file",
+                    data=convert_df(st.session_state.df_results),
+                    file_name='OCR_comparator_results.csv',
+                    mime='text/csv',
+                )
