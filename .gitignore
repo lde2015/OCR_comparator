@@ -1,3 +1,4 @@
 .gitignore
 local_requirements.txt
 /utils
+/configs
