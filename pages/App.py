@@ -310,6 +310,7 @@ def get_cropped(boxes_coordinates, image_cv):
 
 ###
 def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, dict_back_colors):
+
     df_results = pd.DataFrame([])
 
     list_text_easyocr = []
@@ -358,33 +359,42 @@ def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, d
     return df_results, list_reco_images
 
 ##
-@st.cache(show_spinner=False)
-def easyocr_recog(list_images, reader_easyocr, params):
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def easyocr_recog(list_images, _reader_easyocr, params):
+    progress_bar = st.progress(0)
     ## ------- EasyOCR Text recognition
     list_text_easyocr = []
     list_confidence_easyocr = []
-    progress_bar = st.progress(0)
-    for cropped in list_images:
-        result = reader_easyocr.recognize(cropped, **params)
+    step = 0*len(list_images) # first recognition process
+    nb_steps = 3 * len(list_images)
+    for i, cropped in enumerate(list_images):
+        result = _reader_easyocr.recognize(cropped, **params)
         try:
             list_text_easyocr.append(result[0][1])
             list_confidence_easyocr.append(np.round(100*result[0][2], 1))
         except:
             list_text_easyocr.append('Not recognize')
             list_confidence_easyocr.append(100.)
-        progress_bar.progress((i+1)/len(list_images))
+        progress_bar.progress((step+i+1)/nb_steps)
+    progress_bar.empty()
 
     return list_text_easyocr, list_confidence_easyocr
 
 ##
-@st.cache(show_spinner=False)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def ppocr_recog(list_images, params):
+
     ## ------- PPOCR Text recognition
     list_text_ppocr = []
     list_confidence_ppocr = []
     reader_ppocr = PaddleOCR(**params)
-    progress_bar = st.progress(0)
-    for cropped in list_images:
+    step = 1*len(list_images) # second recognition process
+    nb_steps = 3 * len(list_images)
+    progress_bar = st.progress(step/nb_steps)
+
+    for i, cropped in enumerate(list_images):
         result = reader_ppocr.ocr(cropped, det=False, cls=False)
         try:
             list_text_ppocr.append(result[0][0])
@@ -392,7 +402,8 @@ def ppocr_recog(list_images, params):
         except:
             list_text_ppocr.append('Not recognize')
             list_confidence_ppocr.append(100.)
-        progress_bar.progress((i+1)/len(list_images))
+        progress_bar.progress((step+i+1)/nb_steps)
+    progress_bar.empty()
 
     return list_text_ppocr, list_confidence_ppocr
 
@@ -404,7 +415,10 @@ def mmocr_recog(list_images, params):
     list_text_mmocr = []
     list_confidence_mmocr = []
     reader_mmocr = MMOCR(det=None, **params)
-    progress_bar = st.progress(0)
+    step = 2*len(list_images) # third recognition process
+    nb_steps = 3 * len(list_images)
+    progress_bar = st.progress(step/nb_steps)
+
     for i, cropped in enumerate(list_images):
         result = reader_mmocr.readtext(cropped, details=True)
         try:
@@ -413,7 +427,7 @@ def mmocr_recog(list_images, params):
         except:
             list_text_mmocr.append('Not recognize')
             list_confidence_mmocr.append(100.)
-        progress_bar.progress((i+1)/len(list_images))
+        progress_bar.progress((step+i+1)/nb_steps)
 
     return list_text_mmocr, list_confidence_mmocr
 
@@ -494,86 +508,87 @@ if image_file is not None:
 
 ##----------- Form with original image & hyperparameters for detectors ----------------------------------
     with st.form("form1"):
-        with st.expander("Original image", expanded=True):
-            col1, col2 = st.columns(2, gap="medium")
-            col1.image(list_images[0], width=500, use_column_width=True)
+        col1, col2 = st.columns(2, gap="medium")
+        col1.markdown("##### Original image")
+        col1.image(list_images[0], width=500, use_column_width=True)
+        col2.markdown("##### Hyperparameters values for detection")
+        hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=True)
 
-            col2.markdown("#### Choose hyperparameters values for the detection:")
-            tabs = col2.tabs(reader_type_list)
-            with tabs[0]:
-                t0_min_size = st.slider("min_size", 1, 20, 10, step=1, \
-                              help="min_size (int, default = 10) - \
-                              Filter text box smaller than minimum value in pixel")
-                t0_text_threshold = st.slider("text_threshold", 0.1, 1., 0.7, step=0.1, \
-                              help="text_threshold (float, default = 0.7) - Text confidence threshold")
-                t0_low_text = st.slider("low_text", 0.1, 1., 0.4, step=0.1, \
-                              help="low_text (float, default = 0.4) - Text low-bound score")
-                t0_link_threshold = st.slider("link_threshold", 0.1, 1., 0.4, step=0.1, \
-                              help="link_threshold (float, default = 0.4) - Link confidence threshold")
-                t0_canvas_size = st.slider("canvas_size", 2000, 5000, 2560, step=10, \
-                              help='''canvas_size (int, default = 2560) \n
-Maximum image size. Image bigger than this value will be resized down''')
-                t0_mag_ratio = st.slider("mag_ratio", 0.1, 5., 1., step=0.1, \
-                              help="mag_ratio (float, default = 1) - Image magnification ratio")
-                t0_slope_ths = st.slider("slope_ths", 0.01, 1., 0.1, step=0.01, \
-                              help='''slope_ths (float, default = 0.1) - Maximum slope \
-                              (delta y/delta x) to considered merging. \n
-Low value means tiled boxes will not be merged.''')
-                t0_ycenter_ths = st.slider("ycenter_ths", 0.1, 1., 0.5, step=0.1, \
-                              help='''ycenter_ths (float, default = 0.5) - Maximum shift in y direction. \n
-Boxes with different level should not be merged.''')
-                t0_height_ths = st.slider("height_ths", 0.1, 1., 0.5, step=0.1, \
-                              help='''height_ths (float, default = 0.5) - Maximum different in box height. \n
-Boxes with very different text size should not be merged.''')
-                t0_width_ths = st.slider("width_ths", 0.1, 1., 0.5, step=0.1, \
-                              help="width_ths (float, default = 0.5) - Maximum horizontal \
-                              distance to merge boxes.")
-                t0_add_margin = st.slider("add_margin", 0.1, 1., 0.1, step=0.1, \
-                              help='''add_margin (float, default = 0.1) - \
-                              Extend bounding boxes in all direction by certain value. \n
-This is important for language with complex script (E.g. Thai).''')
-                t0_optimal_num_chars = st.slider("optimal_num_chars", None, 100, None, step=10, \
-                              help="optimal_num_chars (int, default = None) - If specified, bounding \
-                              boxes with estimated number of characters near this value are returned first.")
+        tabs = hyper_tabs.tabs(reader_type_list)
+        with tabs[0]:
+            t0_min_size = st.slider("min_size", 1, 20, 10, step=1, \
+                          help="min_size (int, default = 10) - \
+                          Filter text box smaller than minimum value in pixel")
+            t0_text_threshold = st.slider("text_threshold", 0.1, 1., 0.7, step=0.1, \
+                          help="text_threshold (float, default = 0.7) - Text confidence threshold")
+            t0_low_text = st.slider("low_text", 0.1, 1., 0.4, step=0.1, \
+                          help="low_text (float, default = 0.4) - Text low-bound score")
+            t0_link_threshold = st.slider("link_threshold", 0.1, 1., 0.4, step=0.1, \
+                          help="link_threshold (float, default = 0.4) - Link confidence threshold")
+            t0_canvas_size = st.slider("canvas_size", 2000, 5000, 2560, step=10, \
+                          help='''canvas_size (int, default = 2560) \n
+Maximum e size. Image bigger than this value will be resized down''')
+            t0_mag_ratio = st.slider("mag_ratio", 0.1, 5., 1., step=0.1, \
+                          help="mag_ratio (float, default = 1) - Image magnification ratio")
+            t0_slope_ths = st.slider("slope_ths", 0.01, 1., 0.1, step=0.01, \
+                          help='''slope_ths (float, default = 0.1) - Maximum slope \
+                          (delta y/delta x) to considered merging. \n
+Low valuans tiled boxes will not be merged.''')
+            t0_ycenter_ths = st.slider("ycenter_ths", 0.1, 1., 0.5, step=0.1, \
+                          help='''ycenter_ths (float, default = 0.5) - Maximum shift in y direction. \n
+Boxes wiifferent level should not be merged.''')
+            t0_height_ths = st.slider("height_ths", 0.1, 1., 0.5, step=0.1, \
+                          help='''height_ths (float, default = 0.5) - Maximum different in box height. \n
+Boxes wiery different text size should not be merged.''')
+            t0_width_ths = st.slider("width_ths", 0.1, 1., 0.5, step=0.1, \
+                          help="width_ths (float, default = 0.5) - Maximum horizontal \
+                          distance to merge boxes.")
+            t0_add_margin = st.slider("add_margin", 0.1, 1., 0.1, step=0.1, \
+                          help='''add_margin (float, default = 0.1) - \
+                          Extend bounding boxes in all direction by certain value. \n
+This is rtant for language with complex script (E.g. Thai).''')
+            t0_optimal_num_chars = st.slider("optimal_num_chars", None, 100, None, step=10, \
+                          help="optimal_num_chars (int, default = None) - If specified, bounding \
+                          boxes with estimated number of characters near this value are returned first.")
 
-            with tabs[1]:
-                t1_det_algorithm = st.selectbox('det_algorithm', ['DB'], \
-                		help='Type of detection algorithm selected. (default = DB)')
-                t1_det_max_side_len = st.slider('det_max_side_len', 500, 2000, 960, step=10, \
-                        help='''The maximum size of the long side of the image. (default = 960)\n
-Limit the maximum image height and width.\n
-When the long side exceeds this value, the long side will be resized to this size, and the short side \
-will be scaled proportionally.''')
-                t1_det_db_thresh =  st.slider('det_db_thresh', 0.1, 1., 0.3, step=0.1, \
-                        help='''Binarization threshold value of DB output map. (default = 0.3) \n
-Used to filter the binarized image of DB prediction, setting 0.-0.3 has no obvious effect on the result.''')
-                t1_det_db_box_thresh = st.slider('det_db_box_thresh', 0.1, 1., 0.6, step=0.1, \
-                        help='''The threshold value of the DB output box. (default = 0.6) \n
-DB post-processing filter box threshold, if there is a missing box detected, it can be reduced as appropriate. \n
-Boxes score lower than this value will be discard.''')
-                t1_det_db_unclip_ratio = st.slider('det_db_unclip_ratio', 1., 3.0, 1.6, step=0.1, \
-                        help='''The expanded ratio of DB output box. (default = 1.6) \n
-Indicates the compactness of the text box, the smaller the value, the closer the text box to the text.''')
-                t1_det_east_score_thresh = st.slider('det_east_cover_thresh', 0.1, 1., 0.8, step=0.1, \
-                        help="Binarization threshold value of EAST output map. (default = 0.8)")
-                t1_det_east_cover_thresh = st.slider('det_east_cover_thresh', 0.1, 1., 0.1, step=0.1, \
-                        help='''The threshold value of the EAST output box. (default = 0.1) \n
-Boxes score lower than this value will be discarded.''')
-                t1_det_east_nms_thresh = st.slider('det_east_nms_thresh', 0.1, 1., 0.2, step=0.1, \
-                        help="The NMS threshold value of EAST model output box. (default = 0.2)")
-                t1_det_db_score_mode = st.selectbox('det_db_score_mode', ['fast', 'slow'], \
-                        help='''slow: use polygon box to calculate bbox score, fast: use rectangle box \
-                        to calculate. (default = fast) \n
-Use rectangular box to calculate faster, and polygonal box more accurate for curved text area.''')
+        with tabs[1]:
+            t1_det_algorithm = st.selectbox('det_algorithm', ['DB'], \
+            		help='Type of detection algorithm selected. (default = DB)')
+            t1_det_max_side_len = st.slider('det_max_side_len', 500, 2000, 960, step=10, \
+                    help='''The maximum size of the long side of the image. (default = 960)\n
+Limit thximum image height and width.\n
+When theg side exceeds this value, the long side will be resized to this size, and the short side \
+will be ed proportionally.''')
+            t1_det_db_thresh =  st.slider('det_db_thresh', 0.1, 1., 0.3, step=0.1, \
+                    help='''Binarization threshold value of DB output map. (default = 0.3) \n
+Used to er the binarized image of DB prediction, setting 0.-0.3 has no obvious effect on the result.''')
+            t1_det_db_box_thresh = st.slider('det_db_box_thresh', 0.1, 1., 0.6, step=0.1, \
+                    help='''The threshold value of the DB output box. (default = 0.6) \n
+DB post-essing filter box threshold, if there is a missing box detected, it can be reduced as appropriate. \n
+Boxes sclower than this value will be discard.''')
+            t1_det_db_unclip_ratio = st.slider('det_db_unclip_ratio', 1., 3.0, 1.6, step=0.1, \
+                    help='''The expanded ratio of DB output box. (default = 1.6) \n
+Indicatee compactness of the text box, the smaller the value, the closer the text box to the text.''')
+            t1_det_east_score_thresh = st.slider('det_east_cover_thresh', 0.1, 1., 0.8, step=0.1, \
+                    help="Binarization threshold value of EAST output map. (default = 0.8)")
+            t1_det_east_cover_thresh = st.slider('det_east_cover_thresh', 0.1, 1., 0.1, step=0.1, \
+                    help='''The threshold value of the EAST output box. (default = 0.1) \n
+Boxes sclower than this value will be discarded.''')
+            t1_det_east_nms_thresh = st.slider('det_east_nms_thresh', 0.1, 1., 0.2, step=0.1, \
+                    help="The NMS threshold value of EAST model output box. (default = 0.2)")
+            t1_det_db_score_mode = st.selectbox('det_db_score_mode', ['fast', 'slow'], \
+                    help='''slow: use polygon box to calculate bbox score, fast: use rectangle box \
+                    to calculate. (default = fast) \n
+Use rectlar box to calculate faster, and polygonal box more accurate for curved text area.''')
 
-            with tabs[2]:
-                t2_det = st.selectbox('det', ['DB_r18','DB_r50','DBPP_r50','DRRG', \
-                            'FCE_IC15','FCE_CTW_DCNv2','MaskRCNN_CTW','MaskRCNN_IC15','MaskRCNN_IC17', \
-                            'PANet_CTW','PANet_IC15','PS_CTW','PS_IC15','Tesseract','TextSnake'], 10, \
-                		help='Text detection algorithm. (default = PANet_IC15)')
-                st.write("###### *More about text detection models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textdet_models.html)")
-                t2_merge_xdist = st.slider('merge_xdist', 1, 50, 20, step=1, \
-                        help='The maximum x-axis distance to merge boxes. (defaut=20)')
+        with tabs[2]:
+            t2_det = st.selectbox('det', ['DB_r18','DB_r50','DBPP_r50','DRRG', \
+                        'FCE_IC15','FCE_CTW_DCNv2','MaskRCNN_CTW','MaskRCNN_IC15','MaskRCNN_IC17', \
+                        'PANet_CTW','PANet_IC15','PS_CTW','PS_IC15','Tesseract','TextSnake'], 10, \
+            		help='Text detection algorithm. (default = PANet_IC15)')
+            st.write("###### *More about text detection models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textdet_models.html)")
+            t2_merge_xdist = st.slider('merge_xdist', 1, 50, 20, step=1, \
+                    help='The maximum x-axis distance to merge boxes. (defaut=20)')
 
 
         submit_detect = st.form_submit_button("Launch detection")
@@ -630,73 +645,77 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
         with show_detect.container():
             columns = st.columns(st.session_state.columns_size, gap='medium')
             for i, col in enumerate(columns):
-                column_title = '<p style="font-size: 20px;color:'+st.session_state.columns_color[i] + \
+                column_title = '<p style="font-size: 20px;color:' + \
+                               st.session_state.columns_color[i] + \
                                ';">Detection with ' + reader_type_list[i]+ '</p>'
                 col.markdown(column_title, unsafe_allow_html=True)
-                col.image(list_images[i+2], width=st.session_state.column_width[i], use_column_width=True)
+                col.image(list_images[i+2], width=st.session_state.column_width[i], \
+                          use_column_width=True)
 
         st.subheader("Text recognition")
 
 ##----------- Form with detection results & hyperparameters for recognition -----------------------------
         with st.form("form2"):
-            st.markdown("##### Using detection performed above by:")
-            st.radio('Choose the detecter:', reader_type_list, key='detect_reader', \
-                                             horizontal=True)
-            with st.expander("Choose hyperparameters values for the recognition:", expanded=False):
-                st.markdown("Choose hyperparameters values for the recognition")
-                tabs = st.tabs(reader_type_list)
-                with tabs[0]:
-                    t0_decoder = st.selectbox('decoder', ['greedy', 'beamsearch', 'wordbeamsearch'], \
-                        help="decoder (string, default = 'greedy') - options are 'greedy', 'beamsearch' \
-                        and 'wordbeamsearch.")
-                    t0_beamWidth = st.slider('beamWidth', 2, 20, 5, step=1, \
-                        help="beamWidth (int, default = 5) - How many beam to keep when decoder = \
-                        'beamsearch' or 'wordbeamsearch'.")
-                    t0_batch_size = st.slider('batch_size', 1, 10, 1, step=1, \
-                        help="batch_size (int, default = 1) - batch_size>1 will make EasyOCR faster \
-                        but use more memory.")
-                    t0_workers = st.slider('workers', 0, 10, 0, step=1, \
-                        help="workers (int, default = 0) - Number thread used in of dataloader.")
-                    t0_allowlist = st.text_input('allowlist', value="", max_chars=None, \
-                        placeholder='Force EasyOCR to recognize only this subset of characters', \
-                        help='''allowlist (string) - Force EasyOCR to recognize only subset of characters.\n
-        Useful for specific problem (E.g. license plate, etc.)''')
-                    t0_blocklist = st.text_input('blocklist', value="", max_chars=None, \
-                        placeholder='Block subset of character (will be ignored if allowlist is given)', \
-                        help='''blocklist (string) - Block subset of character. This argument will be \
-                        ignored if allowlist is given.''')
-                    t0_detail = st.radio('detail', [0, 1], 1, horizontal=True, \
-                        help="detail (int, default = 1) - Set this to 0 for simple output")
-                    t0_paragraph = st.radio('paragraph', [True, False], 1, horizontal=True, \
-                        help='paragraph (bool, default = False) - Combine result into paragraph')
-                    t0_contrast_ths = st.slider('contrast_ths', 0.05, 1., 0.1, step=0.01, \
-                        help='''contrast_ths (float, default = 0.1) - Text box with contrast lower than \
-                        this value will be passed into model 2 times.\n
-        First is with original image and second with contrast adjusted to 'adjust_contrast' value.\n
-        The one with more confident level will be returned as a result.''')
-                    t0_adjust_contrast = st.slider('adjust_contrast', 0.1, 1., 0.5, step=0.1, \
-                        help = 'adjust_contrast (float, default = 0.5) - target contrast level for low \
-                        contrast text box')
+            col1, col2 = st.columns([1,2])
+            col1.markdown("##### Using detection performed above by:")
+            col1.radio('Choose the detecter:', reader_type_list, key='detect_reader', \
+                                               horizontal=False)
+            col2.markdown("##### Hyperparameters values for recognition")
+            hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=False)
 
-                with tabs[1]:
-                    t1_rec_algorithm = st.selectbox('rec_algorithm', ['CRNN', 'SVTR_LCNet'], 0, \
-                        help="Type of recognition algorithm selected. (default=CRNN)")
-                    t1_rec_batch_num = st.slider('rec_batch_num', 1, 50, step=1, \
-                        help="When performing recognition, the batchsize of forward images. (default=30)")
-                    t1_max_text_length = st.slider('max_text_length', 3, 250, 25, step=1, \
-                        help="The maximum text length that the recognition algorithm can recognize. (default=25)")
-                    t1_use_space_char = st.radio('use_space_char', [True, False], 0, horizontal=True, \
-                        help="Whether to recognize spaces. (default=TRUE)")
-                    t1_drop_score = st.slider('drop_score', 0., 1., 0.25, step=.05, \
-                        help="Filter the output by score (from the recognition model), and those below \
-                        this score will not be returned. (default=0.5)")
+            tabs = hyper_tabs.tabs(reader_type_list)
+            with tabs[0]:
+                t0_decoder = st.selectbox('decoder', ['greedy', 'beamsearch', 'wordbeamsearch'], \
+                    help="decoder (string, default = 'greedy') - options are 'greedy', 'beamsearch' \
+                    and 'wordbeamsearch.")
+                t0_beamWidth = st.slider('beamWidth', 2, 20, 5, step=1, \
+                    help="beamWidth (int, default = 5) - How many beam to keep when decoder = \
+                    'beamsearch' or 'wordbeamsearch'.")
+                t0_batch_size = st.slider('batch_size', 1, 10, 1, step=1, \
+                    help="batch_size (int, default = 1) - batch_size>1 will make EasyOCR faster \
+                    but use more memory.")
+                t0_workers = st.slider('workers', 0, 10, 0, step=1, \
+                    help="workers (int, default = 0) - Number thread used in of dataloader.")
+                t0_allowlist = st.text_input('allowlist', value="", max_chars=None, \
+                    placeholder='Force EasyOCR to recognize only this subset of characters', \
+                    help='''allowlist (string) - Force EasyOCR to recognize only subset of characters.\n
+        Usefor specific problem (E.g. license plate, etc.)''')
+                t0_blocklist = st.text_input('blocklist', value="", max_chars=None, \
+                    placeholder='Block subset of character (will be ignored if allowlist is given)', \
+                    help='''blocklist (string) - Block subset of character. This argument will be \
+                    ignored if allowlist is given.''')
+                t0_detail = st.radio('detail', [0, 1], 1, horizontal=True, \
+                    help="detail (int, default = 1) - Set this to 0 for simple output")
+                t0_paragraph = st.radio('paragraph', [True, False], 1, horizontal=True, \
+                    help='paragraph (bool, default = False) - Combine result into paragraph')
+                t0_contrast_ths = st.slider('contrast_ths', 0.05, 1., 0.1, step=0.01, \
+                    help='''contrast_ths (float, default = 0.1) - Text box with contrast lower than \
+                    this value will be passed into model 2 times.\n
+        Firs with original image and second with contrast adjusted to 'adjust_contrast' value.\n
+        The with more confident level will be returned as a result.''')
+                t0_adjust_contrast = st.slider('adjust_contrast', 0.1, 1., 0.5, step=0.1, \
+                    help = 'adjust_contrast (float, default = 0.5) - target contrast level for low \
+                    contrast text box')
 
-                with tabs[2]:
-                    t2_recog = st.selectbox('recog', ['ABINet','CRNN','CRNN_TPS','MASTER', \
-                                  'NRTR_1/16-1/8','NRTR_1/8-1/4','RobustScanner','SAR','SAR_CN', \
-                                  'SATRN','SATRN_sm','SEG','Tesseract'], 7, \
-                            help='Text recognition algorithm. (default = SAR)')
-                    st.write("###### *More about text recognition models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textrecog_models.html)")
+            with tabs[1]:
+                t1_rec_algorithm = st.selectbox('rec_algorithm', ['CRNN', 'SVTR_LCNet'], 0, \
+                    help="Type of recognition algorithm selected. (default=CRNN)")
+                t1_rec_batch_num = st.slider('rec_batch_num', 1, 50, step=1, \
+                    help="When performing recognition, the batchsize of forward images. (default=30)")
+                t1_max_text_length = st.slider('max_text_length', 3, 250, 25, step=1, \
+                    help="The maximum text length that the recognition algorithm can recognize. (default=25)")
+                t1_use_space_char = st.radio('use_space_char', [True, False], 0, horizontal=True, \
+                    help="Whether to recognize spaces. (default=TRUE)")
+                t1_drop_score = st.slider('drop_score', 0., 1., 0.25, step=.05, \
+                    help="Filter the output by score (from the recognition model), and those below \
+                    this score will not be returned. (default=0.5)")
+
+            with tabs[2]:
+                t2_recog = st.selectbox('recog', ['ABINet','CRNN','CRNN_TPS','MASTER', \
+                              'NRTR_1/16-1/8','NRTR_1/8-1/4','RobustScanner','SAR','SAR_CN', \
+                              'SATRN','SATRN_sm','SEG','Tesseract'], 7, \
+                        help='Text recognition algorithm. (default = SAR)')
+                st.write("###### *More about text recognition models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textrecog_models.html)")
 
             submit_reco = st.form_submit_button("Launch recognition")
 
@@ -716,7 +735,7 @@ Use rectangular box to calculate faster, and polygonal box more accurate for cur
                     column_title = '<p style="font-size: 20px;color:'+columns_color[i] + \
                                     ';">Detection with ' + reader_type_list[i]+ '</p>'
                     col.markdown(column_title, unsafe_allow_html=True)
-                    col.image(list_images[i+2], width=column_width[i])
+                    col.image(list_images[i+2], width=column_width[i], use_column_width=True)
                 st.session_state.columns_size = columns_size
                 st.session_state.column_width = column_width
                 st.session_state.columns_color = columns_color
