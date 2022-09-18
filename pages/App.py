@@ -105,13 +105,15 @@ def initializations():
 
     return reader_type_list, reader_type_dict, color, list_dict_lang, cols_size, dict_back_colors, fig
 ###
-@st.cache(show_spinner=False)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def init_easyocr(params):
     ocr = easyocr.Reader(params)
     return ocr
 
 ###
 @st.cache(show_spinner=False)
+#@st.experimental_memo(show_spinner=False)
 def init_ppocr(params):
     ocr = PaddleOCR(lang=params[0],
                     **params[1]
@@ -119,8 +121,10 @@ def init_ppocr(params):
     return ocr
 
 ###
-@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None}, \
-          allow_output_mutation=True)
+#@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None}, \
+#          allow_output_mutation=True)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def init_mmocr(params):
     ocr = MMOCR(recog=None, **params[1])
     return ocr
@@ -148,7 +152,8 @@ def init_readers(list_params):
     return list_readers
 
 ###
-@st.cache(show_spinner=False)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def load_image(image_file):
     image_path = "img."+image_file.name.split('.')[-1]
     img = Image.open(image_file)
@@ -161,9 +166,10 @@ def load_image(image_file):
     return image_path, image_orig, image_cv2
 
 ###
-@st.cache(show_spinner=False)
-def easyocr_detect(reader, image_path, params):
-    easyocr_coordinates = text_detect('easyocr', reader, image_path, params[1])
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def easyocr_detect(_reader, image_path, params):
+    easyocr_coordinates = text_detect('easyocr', _reader, image_path, params[1])
     # The format of the coordinate is as follows: [x_min, x_max, y_min, y_max]
     # Format boxes coordinates for draw
     easyocr_boxes_coordinates = list(map(easyocr_coord_convert, easyocr_coordinates))
@@ -171,39 +177,42 @@ def easyocr_detect(reader, image_path, params):
     return easyocr_boxes_coordinates
 
 ###
-@st.cache(show_spinner=False)
-def ppocr_detect(reader, image_path, params):
-    ppocr_boxes_coordinates = text_detect('ppocr', reader, image_path, params)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def ppocr_detect(_reader, image_path, params):
+    ppocr_boxes_coordinates = text_detect('ppocr', _reader, image_path, params)
 
     return ppocr_boxes_coordinates
 
 ###
-@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None})
-def mmocr_detect(reader, image_path, params):
-    mmocr_boxes_coordinates = text_detect('mmocr', reader, image_path, params)
+#@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None})
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def mmocr_detect(_reader, image_path, params):
+    mmocr_boxes_coordinates = text_detect('mmocr', _reader, image_path, params)
 
     return mmocr_boxes_coordinates
 
 ###
-def process_detect(image_path, list_images, list_readers, list_params, color):
+def process_detect(image_path, list_images, _list_readers, list_params, color):
 
     ## ------- EasyOCR Text detection
     with st.spinner('EasyOCR Text detection in progress ...'):
-        easyocr_boxes_coordinates = easyocr_detect(list_readers[0], image_path, list_params[0])
+        easyocr_boxes_coordinates = easyocr_detect(_list_readers[0], image_path, list_params[0])
         # Visualization
         easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, color, 'None', 7)
     ##
 
     ## ------- PPOCR Text detection
     with st.spinner('PPOCR Text detection in progress ...'):
-        ppocr_boxes_coordinates = ppocr_detect(list_readers[1], image_path, {})
+        ppocr_boxes_coordinates = ppocr_detect(_list_readers[1], image_path, {})
         # Visualization
         ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, color, 'None', 7)
     ##
 
     ## ------- MMOCR Text detection
     with st.spinner('MMOCR Text detection in progress ...'):
-        mmocr_boxes_coordinates = mmocr_detect(list_readers[2], image_path, {})
+        mmocr_boxes_coordinates = mmocr_detect(_list_readers[2], image_path, {})
         # Visualization
         mmocr_image_detect = draw_detected(list_images[0], mmocr_boxes_coordinates, color, 'None', 7)
     ##
@@ -295,7 +304,8 @@ def easyocr_coord_convert(list_coord):
     return [ [c[0], c[2]], [c[1], c[2]], [c[1], c[3]], [c[0], c[3]] ]
 
 ##
-@st.cache(show_spinner=False)
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
 def get_cropped(boxes_coordinates, image_cv):
     list_images = []
     for box in boxes_coordinates:
