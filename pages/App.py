@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 import easyocr
 from paddleocr import PaddleOCR, draw_ocr
 from mmocr.utils.ocr import MMOCR
+import pytesseract
 import sys
 from mycolorpy import colorlist as mcp
 from PIL import ImageColor
