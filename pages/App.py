@@ -5,12 +5,13 @@ import pandas as pd
 import torch
 
 import cv2
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import easyocr
-from paddleocr import PaddleOCR, draw_ocr
+from paddleocr import PaddleOCR
 from mmocr.utils.ocr import MMOCR
 import pytesseract
+from pytesseract import Output
 import sys
 from mycolorpy import colorlist as mcp
 from PIL import ImageColor
@@ -24,11 +25,11 @@ def convert_df(df):
 @st.cache(show_spinner=False)
 def initializations():
     # the readers considered
-    reader_type_list = ['EasyOCR', 'PPOCR', 'MMOCR']
-    reader_type_dict = {'EasyOCR': 0, 'PPOCR': 1, 'MMOCR': 2}
+    reader_type_list = ['EasyOCR', 'PPOCR', 'MMOCR', 'Tesseract']
+    reader_type_dict = {'EasyOCR': 0, 'PPOCR': 1, 'MMOCR': 2, 'Tesseract': 3}
 
     # Columns for recognition details results
-    cols_size = [2] + [2,1]*len(reader_type_list)
+    cols_size = [2] + [2,1]*(len(reader_type_list)-1) # Except Tesseract
 
     # Colorscale for recognitions areas
     list_confid = list(np.round(np.arange(0,105.,0.1), 1))
@@ -78,7 +79,39 @@ def initializations():
 
     dict_lang_mmocr = {'English & Chinese': 'en'}
 
-    list_dict_lang = [dict_lang_easyocr, dict_lang_ppocr, dict_lang_mmocr]
+    dict_lang_tesseract = {'Afrikaans': 'afr','Albanian': 'sqi','Amharic': 'amh','Arabic': 'ara', \
+    'Armenian': 'hye','Assamese': 'asm','Azerbaijani - Cyrilic': 'aze_cyrl','Azerbaijani': 'aze', \
+    'Basque': 'eus','Belarusian': 'bel','Bengali': 'ben','Bosnian': 'bos','Breton': 'bre', \
+    'Bulgarian': 'bul','Burmese': 'mya','Catalan; Valencian': 'cat','Cebuano': 'ceb', \
+    'Central Khmer': 'khm','Cherokee': 'chr','Chinese - Simplified': 'chi_sim', \
+    'Chinese - Traditional': 'chi_tra','Corsican': 'cos','Croatian': 'hrv','Czech': 'ces', \
+    'Danish': 'dan','Dutch; Flemish': 'nld','Dzongkha': 'dzo','English, Middle (1100-1500)': 'enm', \
+    'English': 'eng','Esperanto': 'epo','Estonian': 'est','Faroese': 'fao', \
+    'Filipino (old - Tagalog)': 'fil','Finnish': 'fin','French, Middle (ca.1400-1600)': 'frm', \
+    'French': 'fra','Galician': 'glg','Georgian - Old': 'kat_old','Georgian': 'kat', \
+    'German - Fraktur': 'frk','German': 'deu','Greek, Modern (1453-)': 'ell','Gujarati': 'guj', \
+    'Haitian; Haitian Creole': 'hat','Hebrew': 'heb','Hindi': 'hin','Hungarian': 'hun', \
+    'Icelandic': 'isl','Indonesian': 'ind','Inuktitut': 'iku','Irish': 'gle', \
+    'Italian - Old': 'ita_old','Italian': 'ita','Japanese': 'jpn','Javanese': 'jav', \
+    'Kannada': 'kan','Kazakh': 'kaz','Kirghiz; Kyrgyz': 'kir','Korean (vertical)': 'kor_vert', \
+    'Korean': 'kor','Kurdish (Arabic Script)': 'kur_ara','Lao': 'lao','Latin': 'lat', \
+    'Latvian': 'lav','Lithuanian': 'lit','Luxembourgish': 'ltz','Macedonian': 'mkd','Malay': 'msa', \
+    'Malayalam': 'mal','Maltese': 'mlt','Maori': 'mri','Marathi': 'mar','Mongolian': 'mon', \
+    'Nepali': 'nep','Norwegian': 'nor','Occitan (post 1500)': 'oci', \
+    'Orientation and script detection module': 'osd','Oriya': 'ori','Panjabi; Punjabi': 'pan', \
+    'Persian': 'fas','Polish': 'pol','Portuguese': 'por','Pushto; Pashto': 'pus','Quechua': 'que', \
+    'Romanian; Moldavian; Moldovan': 'ron','Russian': 'rus','Sanskrit': 'san', \
+    'Scottish Gaelic': 'gla','Serbian - Latin': 'srp_latn','Serbian': 'srp','Sindhi': 'snd', \
+    'Sinhala; Sinhalese': 'sin','Slovak': 'slk','Slovenian': 'slv', \
+    'Spanish; Castilian - Old': 'spa_old','Spanish; Castilian': 'spa','Sundanese': 'sun', \
+    'Swahili': 'swa','Swedish': 'swe','Syriac': 'syr','Tajik': 'tgk','Tamil': 'tam', \
+    'Tatar': 'tat','Telugu': 'tel','Thai': 'tha','Tibetan': 'bod','Tigrinya': 'tir','Tonga': 'ton', \
+    'Turkish': 'tur','Uighur; Uyghur': 'uig','Ukrainian': 'ukr','Urdu': 'urd', \
+    'Uzbek - Cyrilic': 'uzb_cyrl','Uzbek': 'uzb','Vietnamese': 'vie','Welsh': 'cym', \
+    'Western Frisian': 'fry','Yiddish': 'yid','Yoruba': 'yor'
+    }
+
+    list_dict_lang = [dict_lang_easyocr, dict_lang_ppocr, dict_lang_mmocr, dict_lang_tesseract]
 
     # Initialization of detection form
     if 'columns_size' not in st.session_state:
@@ -170,7 +203,20 @@ def load_image(image_file):
 #@st.cache(show_spinner=False)
 @st.experimental_memo(show_spinner=False)
 def easyocr_detect(_reader, image_path, params):
-    easyocr_coordinates = text_detect('easyocr', _reader, image_path, params[1])
+    # EasyOCR detection method
+    # https://medium.com/quantrium-tech/integrating-multiple-ocr-models-to-perform-detection-and-recognition-separately-using-python-f2c73743e1e0 :
+    # I have put some hyper parameter values that optimises the detection process based on my experiments.
+    # The parameter width_ths specifies the maximum distance (horizontal) between two bounding boxes to be merged
+    # (default threshold is 0.5) and mag_ratio magnifies the image based on the factor given.
+    # Generally, you provide the factor >1 to enlarge and <1 to compress the image (default ratio is 1).
+    dict_param = params[1]
+    detection_result = _reader.detect(image_path,
+                                     #width_ths=0.7,
+                                     #mag_ratio=1.5
+                                     **dict_param
+                                    )
+    easyocr_coordinates = detection_result[0][0]
+
     # The format of the coordinate is as follows: [x_min, x_max, y_min, y_max]
     # Format boxes coordinates for draw
     easyocr_boxes_coordinates = list(map(easyocr_coord_convert, easyocr_coordinates))
@@ -180,8 +226,9 @@ def easyocr_detect(_reader, image_path, params):
 ###
 #@st.cache(show_spinner=False)
 @st.experimental_memo(show_spinner=False)
-def ppocr_detect(_reader, image_path, params):
-    ppocr_boxes_coordinates = text_detect('ppocr', _reader, image_path, params)
+def ppocr_detect(_reader, image_path):
+    # PPOCR detection method
+    ppocr_boxes_coordinates = _reader.ocr(image_path, rec=False)
 
     return ppocr_boxes_coordinates
 
@@ -189,10 +236,54 @@ def ppocr_detect(_reader, image_path, params):
 #@st.cache(show_spinner=False, hash_funcs={torch.nn.parameter.Parameter: lambda _: None})
 #@st.cache(show_spinner=False)
 @st.experimental_memo(show_spinner=False)
-def mmocr_detect(_reader, image_path, params):
-    mmocr_boxes_coordinates = text_detect('mmocr', _reader, image_path, params)
+def mmocr_detect(_reader, image_path):
+    # MMOCR detection method
+    det_result = _reader.readtext(image_path, details=True)
+    bboxes_list = [res['boundary_result'] for res in det_result]
+    mmocr_boxes_coordinates = []
+    for bboxes in bboxes_list:
+        for bbox in bboxes:
+            box = bbox[:8]
+            if len(bbox) > 9:
+                min_x = min(bbox[0:-1:2])
+                min_y = min(bbox[1:-1:2])
+                max_x = max(bbox[0:-1:2])
+                max_y = max(bbox[1:-1:2])
+                #box = [min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y]
+            else:
+                min_x = min(bbox[0:-1:2])
+                min_y = min(bbox[1::2])
+                max_x = max(bbox[0:-1:2])
+                max_y = max(bbox[1::2])
+            box4 = [ [min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y] ]
+            mmocr_boxes_coordinates.append(box4)
 
     return mmocr_boxes_coordinates
+
+###
+def cropped_1box(box, img):
+    box_ar = np.array(box).astype(np.int64)
+    x_min = box_ar[:, 0].min()
+    x_max = box_ar[:, 0].max()
+    y_min = box_ar[:, 1].min()
+    y_max = box_ar[:, 1].max()
+    cropped = img[y_min:y_max, x_min:x_max]
+
+    return cropped
+
+###
+@st.experimental_memo(show_spinner=False)
+def tesserocr_detect(_img, params):
+    dict_param = params[1]
+    df = pytesseract.image_to_data(_img, **dict_param, output_type=Output.DATAFRAME)
+    df['box'] = df.apply(lambda d: [[d['left'], d['top']], \
+                                    [d['left'] + d['width'], d['top']], \
+                                    [d['left'] + d['width'], d['top'] + d['height']], \
+                                    [d['left'], d['top'] + d['height']], \
+                                   ], axis=1)
+    tesserocr_boxes_coordinates = df[df.word_num > 0]['box'].to_list()
+
+    return tesserocr_boxes_coordinates
 
 ###
 def process_detect(image_path, list_images, _list_readers, list_params, color):
@@ -201,76 +292,41 @@ def process_detect(image_path, list_images, _list_readers, list_params, color):
     with st.spinner('EasyOCR Text detection in progress ...'):
         easyocr_boxes_coordinates = easyocr_detect(_list_readers[0], image_path, list_params[0])
         # Visualization
-        easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, color, 'None', 7)
+        easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, \
+                                             color, 'None', 7)
     ##
 
     ## ------- PPOCR Text detection
     with st.spinner('PPOCR Text detection in progress ...'):
-        ppocr_boxes_coordinates = ppocr_detect(_list_readers[1], image_path, {})
+        ppocr_boxes_coordinates = ppocr_detect(_list_readers[1], image_path)
         # Visualization
-        ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, color, 'None', 7)
+        ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, \
+                                           color, 'None', 7)
     ##
 
     ## ------- MMOCR Text detection
     with st.spinner('MMOCR Text detection in progress ...'):
-        mmocr_boxes_coordinates = mmocr_detect(_list_readers[2], image_path, {})
+        mmocr_boxes_coordinates = mmocr_detect(_list_readers[2], image_path)
         # Visualization
-        mmocr_image_detect = draw_detected(list_images[0], mmocr_boxes_coordinates, color, 'None', 7)
+        mmocr_image_detect = draw_detected(list_images[0], mmocr_boxes_coordinates, \
+                                           color, 'None', 7)
     ##
 
+    ## ------- Tesseract Text detection
+    with st.spinner('Tesseract Text detection in progress ...'):
+        tesserocr_boxes_coordinates = tesserocr_detect(list_images[0], list_params[3])
+        # Visualization
+        tesserocr_image_detect = draw_detected(list_images[0], tesserocr_boxes_coordinates, \
+                                               color, 'None', 7)
+    ##
     #
-    list_images += [easyocr_image_detect, ppocr_image_detect, mmocr_image_detect]
-    list_coordinates = [easyocr_boxes_coordinates, ppocr_boxes_coordinates, mmocr_boxes_coordinates]
+    list_images += [easyocr_image_detect, ppocr_image_detect, mmocr_image_detect, \
+                    tesserocr_image_detect]
+    list_coordinates = [easyocr_boxes_coordinates, ppocr_boxes_coordinates, \
+                        mmocr_boxes_coordinates, tesserocr_boxes_coordinates]
     #
 
     return list_images, list_coordinates
-
-###
-def text_detect(reader_type, reader, image_path, dict_param):
-# Return : boxes with text coordinates
-
-    if reader_type == 'easyocr':
-        # EasyOCR detection method
-        # https://medium.com/quantrium-tech/integrating-multiple-ocr-models-to-perform-detection-and-recognition-separately-using-python-f2c73743e1e0 :
-        # I have put some hyper parameter values that optimises the detection process based on my experiments.
-        # The parameter width_ths specifies the maximum distance (horizontal) between two bounding boxes to be merged
-        # (default threshold is 0.5) and mag_ratio magnifies the image based on the factor given.
-        # Generally, you provide the factor >1 to enlarge and <1 to compress the image (default ratio is 1).
-
-        detection_result = reader.detect(image_path,
-                                         #width_ths=0.7,
-                                         #mag_ratio=1.5
-                                         **dict_param
-                                        )
-        boxes_coordinates = detection_result[0][0]
-
-    elif reader_type == 'ppocr':
-        # PPOCR detection method
-        boxes_coordinates = reader.ocr(image_path, rec=False)
-
-    elif reader_type == 'mmocr':
-        # MMOCR detection method
-        det_result = reader.readtext(image_path, details=True)
-        bboxes_list = [res['boundary_result'] for res in det_result]
-        boxes_coordinates = []
-        for bboxes in bboxes_list:
-            for bbox in bboxes:
-                box = bbox[:8]
-                if len(bbox) > 9:
-                    min_x = min(bbox[0:-1:2])
-                    min_y = min(bbox[1:-1:2])
-                    max_x = max(bbox[0:-1:2])
-                    max_y = max(bbox[1:-1:2])
-                    #box = [min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y]
-                else:
-                    min_x = min(bbox[0:-1:2])
-                    min_y = min(bbox[1::2])
-                    max_x = max(bbox[0:-1:2])
-                    max_y = max(bbox[1::2])
-                box4 = [ [min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y] ]
-                boxes_coordinates.append(box4)
-
-    return boxes_coordinates
 
 ###
 def draw_detected(image, boxes_coordinates, color, posit='None', thickness=4):
@@ -310,12 +366,7 @@ def easyocr_coord_convert(list_coord):
 def get_cropped(boxes_coordinates, image_cv):
     list_images = []
     for box in boxes_coordinates:
-        box_ar = np.array(box).astype(np.int64)
-        x_min = box_ar[:, 0].min()
-        x_max = box_ar[:, 0].max()
-        y_min = box_ar[:, 1].min()
-        y_max = box_ar[:, 1].max()
-        cropped = image_cv[y_min:y_max, x_min:x_max]
+        cropped = cropped_1box(box, image_cv)
         list_images.append(cropped)
     return list_images
 
@@ -331,26 +382,31 @@ def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, d
     list_text_mmocr = []
     list_confidence_mmocr = []
 
-    # 1. Create cropped images from detection
+    # Create cropped images from detection
     list_images = get_cropped(boxes_coordinates, image_cv)
 
-    # 2. recognize with EasyOCR
+    # Recognize with EasyOCR
     with st.spinner('EasyOCR Text recognition in progress ...'):
         list_text_easyocr, list_confidence_easyocr = easyocr_recog(list_images, list_readers[0], \
                                                                    list_dict_params[0])
     ##
 
-    # 3. recognize with PPOCR
+    # Recognize with PPOCR
     with st.spinner('PPOCR Text recognition in progress ...'):
         list_text_ppocr, list_confidence_ppocr = ppocr_recog(list_images, list_dict_params[1])
     ##
 
-    # 4. recognize with MMOCR
+    # Recognize with MMOCR
     with st.spinner('MMOCR Text recognition in progress ...'):
         list_text_mmocr, list_confidence_mmocr = mmocr_recog(list_images, list_dict_params[2])
     ##
 
-    # 5. create results data frame
+    # Recognize with Tesseract
+    with st.spinner('Tesseract Text recognition in progress ...'):
+        df_results_tesseract = tesserocr_recog(image_cv, list_dict_params[3], len(list_images))
+    ##
+
+    # Create results data frame
     df_results = pd.DataFrame({'cropped_image': list_images,
                                'text_easyocr': list_text_easyocr,
                                'confidence_easyocr': list_confidence_easyocr,
@@ -361,24 +417,25 @@ def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, d
                               }
                              )
 
-    # 6. Draw images with results
+    # Draw images with results
     list_reco_images = draw_reco_images(image_cv, boxes_coordinates, \
                                         [list_text_easyocr, list_text_ppocr, list_text_mmocr], \
                                         [list_confidence_easyocr, list_confidence_ppocr, list_confidence_mmocr], \
-                                        dict_back_colors)
+                                        dict_back_colors, df_results_tesseract)
 
-    return df_results, list_reco_images
+    return df_results, list_reco_images, df_results_tesseract
 
 ##
 #@st.cache(show_spinner=False)
 @st.experimental_memo(show_spinner=False)
 def easyocr_recog(list_images, _reader_easyocr, params):
     progress_bar = st.progress(0)
+
     ## ------- EasyOCR Text recognition
     list_text_easyocr = []
     list_confidence_easyocr = []
     step = 0*len(list_images) # first recognition process
-    nb_steps = 3 * len(list_images)
+    nb_steps = 4 * len(list_images)
     for i, cropped in enumerate(list_images):
         result = _reader_easyocr.recognize(cropped, **params)
         try:
@@ -402,7 +459,7 @@ def ppocr_recog(list_images, params):
     list_confidence_ppocr = []
     reader_ppocr = PaddleOCR(**params)
     step = 1*len(list_images) # second recognition process
-    nb_steps = 3 * len(list_images)
+    nb_steps = 4 * len(list_images)
     progress_bar = st.progress(step/nb_steps)
 
     for i, cropped in enumerate(list_images):
@@ -427,7 +484,7 @@ def mmocr_recog(list_images, params):
     list_confidence_mmocr = []
     reader_mmocr = MMOCR(det=None, **params)
     step = 2*len(list_images) # third recognition process
-    nb_steps = 3 * len(list_images)
+    nb_steps = 4 * len(list_images)
     progress_bar = st.progress(step/nb_steps)
 
     for i, cropped in enumerate(list_images):
@@ -439,21 +496,45 @@ def mmocr_recog(list_images, params):
             list_text_mmocr.append('Not recognize')
             list_confidence_mmocr.append(100.)
         progress_bar.progress((step+i+1)/nb_steps)
+    progress_bar.empty()
 
     return list_text_mmocr, list_confidence_mmocr
 
+##
+#@st.cache(show_spinner=False)
+@st.experimental_memo(show_spinner=False)
+def tesserocr_recog(img, params, nb_images):
+
+    ## ------- Tesseract Text recognition
+    step = 3*nb_images # second recognition process
+    nb_steps = 4 * nb_images
+    progress_bar = st.progress(step/nb_steps)
+
+    df_result = pytesseract.image_to_data(img, **params, output_type=Output.DATAFRAME)
+
+    df_result['box'] = df_result.apply(lambda d: [[d['left'], d['top']], \
+                                                  [d['left'] + d['width'], d['top']], \
+                                                  [d['left'] + d['width'], d['top'] + d['height']], \
+                                                  [d['left'], d['top'] + d['height']], \
+                                                 ], axis=1)
+    df_result['cropped'] = df_result['box'].apply(lambda b: cropped_1box(b, img))
+
+    progress_bar.progress(1.)
+    
+    return df_result[(df_result.word_num > 0) & (df_result.text != ' ')].reset_index(drop=True)
+
 ###
 def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_back_colors, \
-                     font_scale=3, conf_threshold=64):
+                     df_results_tesseract, font_scale=3, conf_threshold=65):
     img = image
-    nb_readers = len(list_texts)
+    nb_readers = len(list_texts) + 1 # Add Tesseract
     list_reco_images = [img.copy() for i in range(nb_readers)]
 
     for num, box_ in enumerate(boxes_coordinates):
         box = np.array(box_).astype(np.int64)
 
         # For each box : draw the results of each recognizer
-        for i in range(nb_readers):
+        for i in range(nb_readers-1):
             confid = np.round(list_confid[i][num], 0)
             rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
             if confid < conf_threshold:
@@ -466,6 +547,25 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
             list_reco_images[i] = cv2.putText(list_reco_images[i], list_texts[i][num], \
                                             (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
                                             cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+
+    # Add Tesseract process
+    ind = nb_readers-1
+    for num, box_ in enumerate(df_results_tesseract['box'].to_list()):
+        box = np.array(box_).astype(np.int64)
+        confid = np.round(df_results_tesseract.iloc[num]['conf'], 0)
+        rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
+        if confid < conf_threshold:
+            text_color = (0, 0, 0)
+        else:
+            text_color = (255, 255, 255)
+
+        list_reco_images[ind] = cv2.rectangle(list_reco_images[ind], (box[0][0], box[0][1]), \
+                                             (box[2][0], box[2][1]), rgb_color, -1)
+        list_reco_images[ind] = cv2.putText(list_reco_images[ind], \
+                                            df_results_tesseract.iloc[num]['text'], \
+                                            (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
+                                            cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+
     return list_reco_images
 
 ###
@@ -493,7 +593,7 @@ def update_font_scale(nb_col, dict_draw_reco):
 
 
 st.title("OCR solutions comparator")
-st.markdown("##### *EasyOCR, PPOCR, MMOCR*")
+st.markdown("##### *EasyOCR, PPOCR, MMOCR, Tesseract*")
 
 # Initializations
 with st.spinner("Initializations in progress ..."):
@@ -502,13 +602,15 @@ with st.spinner("Initializations in progress ..."):
 
 ##----------- Choose language & image -----------------------------------------------------------------
 st.markdown("#### Choose languages for the text recognition")
-lang_col = st.columns(3)
+lang_col = st.columns(4)
 easyocr_key_lang = lang_col[0].selectbox(reader_type_list[0]+" :", list_dict_lang[0].keys(), 26)
 easyocr_lang = list_dict_lang[0][easyocr_key_lang]
 ppocr_key_lang = lang_col[1].selectbox(reader_type_list[1]+" :", list_dict_lang[1].keys(), 22)
 ppocr_lang = list_dict_lang[1][ppocr_key_lang]
 mmocr_key_lang = lang_col[2].selectbox(reader_type_list[2]+" :", list_dict_lang[2].keys(), 0)
 mmocr_lang = list_dict_lang[2][mmocr_key_lang]
+tesserocr_key_lang = lang_col[3].selectbox(reader_type_list[3]+" :", list_dict_lang[3].keys(), 35)
+tesserocr_lang = list_dict_lang[3][tesserocr_key_lang]
 
 image_file = st.file_uploader("Upload image", type=["png","jpg","jpeg"])
 
@@ -601,6 +703,26 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             t2_merge_xdist = st.slider('merge_xdist', 1, 50, 20, step=1, \
                     help='The maximum x-axis distance to merge boxes. (defaut=20)')
 
+        with tabs[3]:
+            t3_psm = st.selectbox('Page segmentation mode (psm)', \
+                                  [' -    Default', \
+                                   ' 4    Assume a single column of text of variable sizes', \
+                                   ' 5    Assume a single uniform block of vertically aligned text', \
+                                   ' 6    Assume a single uniform block of text', \
+                                   ' 7    Treat the image as a single text line', \
+                                   ' 8    Treat the image as a single word', \
+                                   ' 9    Treat the image as a single word in a circle', \
+                                   '10    Treat the image as a single character', \
+                                   '11    Sparse text. Find as much text as possible in no particular order', \
+                                   '13    Raw line. Treat the image as a single text line, \
+                                          bypassing hacks that are Tesseract-specific'])
+            t3_oem = st.selectbox('OCR engine mode', ['0    Legacy engine only', \
+                                  '1    Neural nets LSTM engine only', \
+                                  '2    Legacy + LSTM engines', \
+                                  '3    Default, based on what is available'], 3)
+            t3_whitelist = st.text_input('Limit tesseract to recognize only this characters :', \
+                                         help='Example for numbers only : 0123456789')
+
 
         submit_detect = st.form_submit_button("Launch detection")
 
@@ -610,6 +732,17 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
 
         if t0_optimal_num_chars == 0:
             t0_optimal_num_chars = None
+
+        # Construct the config Tesseract parameter
+        t3_config = ''
+        psm = t3_psm[:2]
+        if psm != ' -':
+            t3_config += '--psm ' + psm.strip()
+        oem = t3_oem[:1]
+        if oem != '3':
+            t3_config += ' --oem ' + oem
+        if t3_whitelist != '':
+            t3_config += ' -c tessedit_char_whitelist=' + t3_whitelist
 
         list_params_det = [[easyocr_lang, {'min_size': t0_min_size, 'text_threshold': t0_text_threshold, \
                        'low_text': t0_low_text, 'link_threshold': t0_link_threshold, \
@@ -622,7 +755,8 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                         'det_db_unclip_ratio': t1_det_db_unclip_ratio, 'det_east_score_thresh': t1_det_east_score_thresh, \
                         'det_east_cover_thresh': t1_det_east_cover_thresh, 'det_east_nms_thresh': t1_det_east_nms_thresh, \
                         'det_db_score_mode': t1_det_db_score_mode}],
-                        [mmocr_lang, {'det': t2_det, 'merge_xdist': t2_merge_xdist}]
+                        [mmocr_lang, {'det': t2_det, 'merge_xdist': t2_merge_xdist}],
+                        [tesserocr_lang, {'lang': tesserocr_lang, 'config': t3_config}]
                         ]
 
         show_info1 = st.empty()
@@ -631,7 +765,8 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
 
         show_info1.info("Text detection in progress ...")
         list_images, list_coordinates = process_detect(image_path, list_images, \
-                                                       list_readers, list_params_det, color)
+                                                                     list_readers, \
+                                                                     list_params_det, color)
         show_info1.empty()
 
         if 'list_readers' not in st.session_state:
@@ -672,7 +807,8 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             col1.radio('Choose the detecter:', reader_type_list, key='detect_reader', \
                                                horizontal=False)
             col2.markdown("##### Hyperparameters values for recognition")
-            hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=False)
+            hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", \
+                                       expanded=True)
 
             tabs = hyper_tabs.tabs(reader_type_list)
             with tabs[0]:
@@ -728,6 +864,26 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                         help='Text recognition algorithm. (default = SAR)')
                 st.write("###### *More about text recognition models*  👉  [here](https://mmocr.readthedocs.io/en/latest/textrecog_models.html)")
 
+            with tabs[3]:
+                t3r_psm = st.selectbox('Page segmentation mode (psm)', \
+                                    [' -    Default', \
+                                    ' 4    Assume a single column of text of variable sizes', \
+                                    ' 5    Assume a single uniform block of vertically aligned text', \
+                                    ' 6    Assume a single uniform block of text', \
+                                    ' 7    Treat the image as a single text line', \
+                                    ' 8    Treat the image as a single word', \
+                                    ' 9    Treat the image as a single word in a circle', \
+                                    '10    Treat the image as a single character', \
+                                    '11    Sparse text. Find as much text as possible in no particular order', \
+                                    '13    Raw line. Treat the image as a single text line, \
+                                            bypassing hacks that are Tesseract-specific'])
+                t3r_oem = st.selectbox('OCR engine mode', ['0    Legacy engine only', \
+                                    '1    Neural nets LSTM engine only', \
+                                    '2    Legacy + LSTM engines', \
+                                    '3    Default, based on what is available'], 3)
+                t3r_whitelist = st.text_input('Limit tesseract to recognize only this characters :', \
+                                            help='Example for numbers only : 0123456789')
+
             submit_reco = st.form_submit_button("Launch recognition")
 
         if submit_reco:
@@ -755,6 +911,17 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             reader_ind = reader_type_dict[st.session_state.detect_reader]
             list_boxes = list_coordinates[reader_ind]
 
+            # Construct the config Tesseract parameter
+            t3r_config = ''
+            psm = t3r_psm[:2]
+            if psm != ' -':
+                t3r_config += '--psm ' + psm.strip()
+            oem = t3r_oem[:1]
+            if oem != '3':
+                t3r_config += ' --oem ' + oem
+            if t3r_whitelist != '':
+                t3r_config += ' -c tessedit_char_whitelist=' + t3r_whitelist
+
             list_params_rec = [{'decoder': t0_decoder, 'beamWidth': t0_beamWidth, \
                                 'batch_size': t0_batch_size, 'workers': t0_workers, \
                                 'allowlist': t0_allowlist, 'blocklist': t0_blocklist, \
@@ -766,21 +933,23 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                                 'use_space_char': t1_use_space_char, 'drop_score': t1_drop_score}, \
                                 **{'lang': list_params_det[1][0]}
                                },
-                               {'recog': t2_recog}
+                               {'recog': t2_recog},
+                               {'lang': tesserocr_lang, 'config': t3r_config}
                               ]
 
             show_info2 = st.empty()
 
             with show_info2.container():
                 st.info("Text recognition in progress ...")
-                df_results, list_reco_images = process_recog(list_readers, list_images[1], \
-                                                             list_boxes, list_params_rec, \
-                                                             dict_back_colors)
+                df_results, list_reco_images, df_results_tesseract = process_recog(list_readers, \
+                                                             list_images[1], list_boxes, \
+                                                             list_params_rec, dict_back_colors)
             show_info2.empty()
 
             st.session_state.df_results = df_results
             st.session_state.list_reco_images = list_reco_images
             st.session_state.list_boxes = list_boxes
+            st.session_state.df_results_tesseract = df_results_tesseract
 
         if 'df_results' in st.session_state:
 ##----------- Show recognition results ------------------------------------------------------------------
@@ -789,13 +958,14 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             list_col_confid = np.arange(2, len(cols_size), 2)
 
             dict_draw_reco = {'image': st.session_state.list_images[1], \
-                              'boxes_coordinates': st.session_state.list_boxes, \
-                              'list_texts': [st.session_state.df_results[x].to_list() \
+                            'boxes_coordinates': st.session_state.list_boxes, \
+                            'list_texts': [st.session_state.df_results[x].to_list() \
                                                 for x in results_cols[list_col_text]], \
-                              'list_confid': [st.session_state.df_results[x].to_list() \
-                                                 for x in results_cols[list_col_confid]], \
-                              'dict_back_colors': dict_back_colors
-                             }
+                            'list_confid': [st.session_state.df_results[x].to_list() \
+                                                for x in results_cols[list_col_confid]], \
+                            'dict_back_colors': dict_back_colors,
+                            'df_results_tesseract' : st.session_state.df_results_tesseract
+                            }
             show_reco = st.empty()
 
             with st.form("form3"):
@@ -805,15 +975,22 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
 
                 col_font.slider('Font scale', 1, 7, 4, step=1, key="font_scale_sld")
                 col_threshold.slider('% confidence threshold for text color change', 40, 100, 64, \
-                                     step=1, key="conf_threshold_sld")
+                                    step=1, key="conf_threshold_sld")
                 col_threshold.write("(text color is black below this % confidence threshold, and white above)")
 
                 with show_reco.container():
                     reco_columns = st.columns(len(reader_type_list), gap='medium')
                     column_width = 400
                     for i, col in enumerate(reco_columns):
-                        column_title = '<p style="font-size: 20px;color:rgb(0,0,0);">Recognition with ' + \
-                                        reader_type_list[i]+ '</p>'
+                        if reader_type_list[i] == 'Tesseract':
+                            column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                            ">Recognition with ' + \
+                                            reader_type_list[i] + \
+                                            '<br>(with its own detector)</br></p>'
+                        else:
+                            column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                            ">Recognition with ' + \
+                                            reader_type_list[i]+ '</p>'
                         col.markdown(column_title, unsafe_allow_html=True)
                         col.image(st.session_state.list_reco_images[i], width=column_width, use_column_width=True)
 
@@ -823,23 +1000,45 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                 update_font_scale(len(reader_type_list), dict_draw_reco)
 
             st.subheader("Recognition details")
-            with st.expander("Detailed areas", expanded=True):
-                cols = st.columns(cols_size)
-                cols[0].markdown('#### Detected area')
-                for i in range(1, len(reader_type_list)*2, 2):
-                    cols[i].markdown('#### with ' + reader_type_list[i//2])
+            with st.expander("Detailed areas", expanded=False):
 
-                for row in st.session_state.df_results.itertuples():
-                    #cols = st.columns(1 + len(reader_type_list)*2)
+                tab_ocr, tab_tesseract = st.tabs(["EasyOCR, PPOCR, MMOCR", "Tesseract"])
+
+                with tab_ocr:
                     cols = st.columns(cols_size)
-                    cols[0].image(row.cropped_image, width=150)
-                    for i in range(1, len(cols), 2):
-                        cols[i].write(getattr(row, results_cols[i]))
-                        cols[i+1].write("("+str(getattr(row, results_cols[i+1]))+"%)")
+                    cols[0].markdown('#### Detected area')
+                    for i in range(1, (len(reader_type_list)-1)*2, 2):
+                        cols[i].markdown('#### with ' + reader_type_list[i//2])
 
-                st.download_button(
-                    label="Download results as CSV file",
-                    data=convert_df(st.session_state.df_results),
-                    file_name='OCR_comparator_results.csv',
-                    mime='text/csv',
-                )
+                    for row in st.session_state.df_results.itertuples():
+                        #cols = st.columns(1 + len(reader_type_list)*2)
+                        cols = st.columns(cols_size)
+                        cols[0].image(row.cropped_image, width=150)
+                        for i in range(1, len(cols), 2):
+                            cols[i].write(getattr(row, results_cols[i]))
+                            cols[i+1].write("("+str(getattr(row, results_cols[i+1]))+"%)")
+
+                    st.download_button(
+                        label="Download results as CSV file",
+                        data=convert_df(st.session_state.df_results),
+                        file_name='OCR_comparator_results.csv',
+                        mime='text/csv',
+                    )
+
+                with tab_tesseract:
+                    cols = st.columns([2,2,1])
+                    cols[0].markdown('#### Detected area')
+                    cols[1].markdown('#### with Tesseract')
+
+                    for row in st.session_state.df_results_tesseract.itertuples():
+                        cols = st.columns([2,2,1])
+                        cols[0].image(row.cropped, width=150)
+                        cols[1].write(getattr(row, 'text'))
+                        cols[2].write("("+str(getattr(row, 'conf'))+"%)")
+
+                    st.download_button(
+                        label="Download Tesseract results as CSV file",
+                        data=convert_df(st.session_state.df_results),
+                        file_name='OCR_comparator_Tesseract_results.csv',
+                        mime='text/csv',
+                    )
