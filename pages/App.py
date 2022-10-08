@@ -329,53 +329,6 @@ def process_detect(image_path, list_images, _list_readers, list_params, color):
     return list_images, list_coordinates
 
 ###
-def text_detect(reader_type, reader, image_path, dict_param):
-# Return : boxes with text coordinates
-
-    if reader_type == 'easyocr':
-        # EasyOCR detection method
-        # https://medium.com/quantrium-tech/integrating-multiple-ocr-models-to-perform-detection-and-recognition-separately-using-python-f2c73743e1e0 :
-        # I have put some hyper parameter values that optimises the detection process based on my experiments.
-        # The parameter width_ths specifies the maximum distance (horizontal) between two bounding boxes to be merged
-        # (default threshold is 0.5) and mag_ratio magnifies the image based on the factor given.
-        # Generally, you provide the factor >1 to enlarge and <1 to compress the image (default ratio is 1).
-
-        detection_result = reader.detect(image_path,
-                                         #width_ths=0.7,
-                                         #mag_ratio=1.5
-                                         **dict_param
-                                        )
-        boxes_coordinates = detection_result[0][0]
-
-    elif reader_type == 'ppocr':
-        # PPOCR detection method
-        boxes_coordinates = reader.ocr(image_path, rec=False)
-
-    elif reader_type == 'mmocr':
-        # MMOCR detection method
-        det_result = reader.readtext(image_path, details=True)
-        bboxes_list = [res['boundary_result'] for res in det_result]
-        boxes_coordinates = []
-        for bboxes in bboxes_list:
-            for bbox in bboxes:
-                box = bbox[:8]
-                if len(bbox) > 9:
-                    min_x = min(bbox[0:-1:2])
-                    min_y = min(bbox[1:-1:2])
-                    max_x = max(bbox[0:-1:2])
-                    max_y = max(bbox[1:-1:2])
-                    #box = [min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y]
-                else:
-                    min_x = min(bbox[0:-1:2])
-                    min_y = min(bbox[1::2])
-                    max_x = max(bbox[0:-1:2])
-                    max_y = max(bbox[1::2])
-                box4 = [ [min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y] ]
-                boxes_coordinates.append(box4)
-
-    return boxes_coordinates
-
-###
 def draw_detected(image, boxes_coordinates, color, posit='None', thickness=4):
 # Input  : boxes coordinates, from top to bottom and from left to right
 #          [ [ [x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max] ],
@@ -450,7 +403,7 @@ def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, d
 
     # Recognize with Tesseract
     with st.spinner('Tesseract Text recognition in progress ...'):
-        df_results_tesseract = tesserocr_recog(list_images, list_dict_params[3])
+        df_results_tesseract = tesserocr_recog(image_cv, list_dict_params[3], len(list_images))
     ##
 
     # Create results data frame
@@ -468,7 +421,7 @@ def process_recog(list_readers, image_cv, boxes_coordinates, list_dict_params, d
     list_reco_images = draw_reco_images(image_cv, boxes_coordinates, \
                                         [list_text_easyocr, list_text_ppocr, list_text_mmocr], \
                                         [list_confidence_easyocr, list_confidence_ppocr, list_confidence_mmocr], \
-                                        dict_back_colors)
+                                        dict_back_colors, df_results_tesseract)
 
     return df_results, list_reco_images, df_results_tesseract
 
@@ -543,19 +496,19 @@ def mmocr_recog(list_images, params):
             list_text_mmocr.append('Not recognize')
             list_confidence_mmocr.append(100.)
         progress_bar.progress((step+i+1)/nb_steps)
+    progress_bar.empty()
 
     return list_text_mmocr, list_confidence_mmocr
 
 ##
 #@st.cache(show_spinner=False)
 @st.experimental_memo(show_spinner=False)
-def tesserocr_recog(list_images, params):
+def tesserocr_recog(img, params, nb_images):
 
     ## ------- Tesseract Text recognition
-    step = 3*len(list_images) # second recognition process
-    nb_steps = 4 * len(list_images)
+    step = 3*nb_images # second recognition process
+    nb_steps = 4 * nb_images
     progress_bar = st.progress(step/nb_steps)
-    img = list_images[0]
 
     df_result = pytesseract.image_to_data(img, **params, output_type=Output.DATAFRAME)
 
@@ -567,21 +520,21 @@ def tesserocr_recog(list_images, params):
     df_result['cropped'] = df_result['box'].apply(lambda b: cropped_1box(b, img))
 
     progress_bar.progress(1.)
-
-    return df_result[df_result.word_num > 0]
+    
+    return df_result[(df_result.word_num > 0) & (df_result.text != ' ')].reset_index(drop=True)
 
 ###
 def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_back_colors, \
-                     font_scale=3, conf_threshold=65):
+                     df_results_tesseract, font_scale=3, conf_threshold=65):
     img = image
-    nb_readers = len(list_texts)
+    nb_readers = len(list_texts) + 1 # Add Tesseract
     list_reco_images = [img.copy() for i in range(nb_readers)]
 
     for num, box_ in enumerate(boxes_coordinates):
         box = np.array(box_).astype(np.int64)
 
         # For each box : draw the results of each recognizer
-        for i in range(nb_readers):
+        for i in range(nb_readers-1):
             confid = np.round(list_confid[i][num], 0)
             rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
             if confid < conf_threshold:
@@ -594,6 +547,25 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
             list_reco_images[i] = cv2.putText(list_reco_images[i], list_texts[i][num], \
                                             (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
                                             cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+
+    # Add Tesseract process
+    ind = nb_readers-1
+    for num, box_ in enumerate(df_results_tesseract['box'].to_list()):
+        box = np.array(box_).astype(np.int64)
+        confid = np.round(df_results_tesseract.iloc[num]['conf'], 0)
+        rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
+        if confid < conf_threshold:
+            text_color = (0, 0, 0)
+        else:
+            text_color = (255, 255, 255)
+
+        list_reco_images[ind] = cv2.rectangle(list_reco_images[ind], (box[0][0], box[0][1]), \
+                                             (box[2][0], box[2][1]), rgb_color, -1)
+        list_reco_images[ind] = cv2.putText(list_reco_images[ind], \
+                                            df_results_tesseract.iloc[num]['text'], \
+                                            (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
+                                            cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+
     return list_reco_images
 
 ###
@@ -835,7 +807,8 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             col1.radio('Choose the detecter:', reader_type_list, key='detect_reader', \
                                                horizontal=False)
             col2.markdown("##### Hyperparameters values for recognition")
-            hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=False)
+            hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", \
+                                       expanded=True)
 
             tabs = hyper_tabs.tabs(reader_type_list)
             with tabs[0]:
@@ -980,68 +953,92 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
 
         if 'df_results' in st.session_state:
 ##----------- Show recognition results ------------------------------------------------------------------
-            tab_ocr, tab_tesseract = st.tabs(["EasyOCR, PPOCR, MMOCR", "Tesseract"])
+            results_cols = st.session_state.df_results.columns
+            list_col_text = np.arange(1, len(cols_size), 2)
+            list_col_confid = np.arange(2, len(cols_size), 2)
 
-            with tab_ocr:
-                results_cols = st.session_state.df_results.columns
-                list_col_text = np.arange(1, len(cols_size), 2)
-                list_col_confid = np.arange(2, len(cols_size), 2)
+            dict_draw_reco = {'image': st.session_state.list_images[1], \
+                            'boxes_coordinates': st.session_state.list_boxes, \
+                            'list_texts': [st.session_state.df_results[x].to_list() \
+                                                for x in results_cols[list_col_text]], \
+                            'list_confid': [st.session_state.df_results[x].to_list() \
+                                                for x in results_cols[list_col_confid]], \
+                            'dict_back_colors': dict_back_colors,
+                            'df_results_tesseract' : st.session_state.df_results_tesseract
+                            }
+            show_reco = st.empty()
 
-                dict_draw_reco = {'image': st.session_state.list_images[1], \
-                                'boxes_coordinates': st.session_state.list_boxes, \
-                                'list_texts': [st.session_state.df_results[x].to_list() \
-                                                    for x in results_cols[list_col_text]], \
-                                'list_confid': [st.session_state.df_results[x].to_list() \
-                                                    for x in results_cols[list_col_confid]], \
-                                'dict_back_colors': dict_back_colors
-                                }
-                show_reco = st.empty()
+            with st.form("form3"):
+                st.plotly_chart(fig_colorscale, use_container_width=True)
 
-                with st.form("form3"):
-                    st.plotly_chart(fig_colorscale, use_container_width=True)
+                col_font, col_threshold = st.columns(2)
 
-                    col_font, col_threshold = st.columns(2)
+                col_font.slider('Font scale', 1, 7, 4, step=1, key="font_scale_sld")
+                col_threshold.slider('% confidence threshold for text color change', 40, 100, 64, \
+                                    step=1, key="conf_threshold_sld")
+                col_threshold.write("(text color is black below this % confidence threshold, and white above)")
 
-                    col_font.slider('Font scale', 1, 7, 4, step=1, key="font_scale_sld")
-                    col_threshold.slider('% confidence threshold for text color change', 40, 100, 64, \
-                                        step=1, key="conf_threshold_sld")
-                    col_threshold.write("(text color is black below this % confidence threshold, and white above)")
-
-                    with show_reco.container():
-                        reco_columns = st.columns(len(reader_type_list), gap='medium')
-                        column_width = 400
-                        for i, col in enumerate(reco_columns):
-                            column_title = '<p style="font-size: 20px;color:rgb(0,0,0);">Recognition with ' + \
+                with show_reco.container():
+                    reco_columns = st.columns(len(reader_type_list), gap='medium')
+                    column_width = 400
+                    for i, col in enumerate(reco_columns):
+                        if reader_type_list[i] == 'Tesseract':
+                            column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                            ">Recognition with ' + \
+                                            reader_type_list[i] + \
+                                            '<br>(with its own detector)</br></p>'
+                        else:
+                            column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                            ">Recognition with ' + \
                                             reader_type_list[i]+ '</p>'
-                            col.markdown(column_title, unsafe_allow_html=True)
-                            col.image(st.session_state.list_reco_images[i], width=column_width, use_column_width=True)
+                        col.markdown(column_title, unsafe_allow_html=True)
+                        col.image(st.session_state.list_reco_images[i], width=column_width, use_column_width=True)
 
-                    submit_resize = st.form_submit_button("Refresh")
+                submit_resize = st.form_submit_button("Refresh")
 
-                if submit_resize:
-                    update_font_scale(len(reader_type_list), dict_draw_reco)
-
-            with tab_tesseract:
-                st.write("Coming soon ...")
+            if submit_resize:
+                update_font_scale(len(reader_type_list), dict_draw_reco)
 
             st.subheader("Recognition details")
-            with st.expander("Detailed areas", expanded=True):
-                cols = st.columns(cols_size)
-                cols[0].markdown('#### Detected area')
-                for i in range(1, len(reader_type_list)*2, 2):
-                    cols[i].markdown('#### with ' + reader_type_list[i//2])
+            with st.expander("Detailed areas", expanded=False):
 
-                for row in st.session_state.df_results.itertuples():
-                    #cols = st.columns(1 + len(reader_type_list)*2)
+                tab_ocr, tab_tesseract = st.tabs(["EasyOCR, PPOCR, MMOCR", "Tesseract"])
+
+                with tab_ocr:
                     cols = st.columns(cols_size)
-                    cols[0].image(row.cropped_image, width=150)
-                    for i in range(1, len(cols), 2):
-                        cols[i].write(getattr(row, results_cols[i]))
-                        cols[i+1].write("("+str(getattr(row, results_cols[i+1]))+"%)")
+                    cols[0].markdown('#### Detected area')
+                    for i in range(1, (len(reader_type_list)-1)*2, 2):
+                        cols[i].markdown('#### with ' + reader_type_list[i//2])
 
-                st.download_button(
-                    label="Download results as CSV file",
-                    data=convert_df(st.session_state.df_results),
-                    file_name='OCR_comparator_results.csv',
-                    mime='text/csv',
-                )
+                    for row in st.session_state.df_results.itertuples():
+                        #cols = st.columns(1 + len(reader_type_list)*2)
+                        cols = st.columns(cols_size)
+                        cols[0].image(row.cropped_image, width=150)
+                        for i in range(1, len(cols), 2):
+                            cols[i].write(getattr(row, results_cols[i]))
+                            cols[i+1].write("("+str(getattr(row, results_cols[i+1]))+"%)")
+
+                    st.download_button(
+                        label="Download results as CSV file",
+                        data=convert_df(st.session_state.df_results),
+                        file_name='OCR_comparator_results.csv',
+                        mime='text/csv',
+                    )
+
+                with tab_tesseract:
+                    cols = st.columns([2,2,1])
+                    cols[0].markdown('#### Detected area')
+                    cols[1].markdown('#### with Tesseract')
+
+                    for row in st.session_state.df_results_tesseract.itertuples():
+                        cols = st.columns([2,2,1])
+                        cols[0].image(row.cropped, width=150)
+                        cols[1].write(getattr(row, 'text'))
+                        cols[2].write("("+str(getattr(row, 'conf'))+"%)")
+
+                    st.download_button(
+                        label="Download Tesseract results as CSV file",
+                        data=convert_df(st.session_state.df_results),
+                        file_name='OCR_comparator_Tesseract_results.csv',
+                        mime='text/csv',
+                    )
