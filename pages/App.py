@@ -2,7 +2,6 @@ import streamlit as st
 import plotly.express as px
 import numpy as np
 import pandas as pd
-import torch
 
 import cv2
 from PIL import Image
@@ -510,18 +509,24 @@ def tesserocr_recog(img, params, nb_images):
     nb_steps = 4 * nb_images
     progress_bar = st.progress(step/nb_steps)
 
-    df_result = pytesseract.image_to_data(img, **params, output_type=Output.DATAFRAME)
+    try:
+        df_result = pytesseract.image_to_data(img, **params, output_type=Output.DATAFRAME)
 
-    df_result['box'] = df_result.apply(lambda d: [[d['left'], d['top']], \
-                                                  [d['left'] + d['width'], d['top']], \
-                                                  [d['left'] + d['width'], d['top'] + d['height']], \
-                                                  [d['left'], d['top'] + d['height']], \
-                                                 ], axis=1)
-    df_result['cropped'] = df_result['box'].apply(lambda b: cropped_1box(b, img))
+        df_result['box'] = df_result.apply(lambda d: [[d['left'], d['top']], \
+                                                    [d['left'] + d['width'], d['top']], \
+                                                    [d['left'] + d['width'], d['top'] + d['height']], \
+                                                    [d['left'], d['top'] + d['height']], \
+                                                    ], axis=1)
+        df_result['cropped'] = df_result['box'].apply(lambda b: cropped_1box(b, img))
+        df_result = df_result[(df_result.word_num > 0) & (df_result.text != ' ')] \
+                             .reset_index(drop=True)
+    except Exception as e:
+        df_result = pd.DataFrame([])
+        st.warning(e)
 
     progress_bar.progress(1.)
     
-    return df_result[(df_result.word_num > 0) & (df_result.text != ' ')].reset_index(drop=True)
+    return df_result
 
 ###
 def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_back_colors, \
@@ -549,22 +554,23 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
                                             cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
 
     # Add Tesseract process
-    ind = nb_readers-1
-    for num, box_ in enumerate(df_results_tesseract['box'].to_list()):
-        box = np.array(box_).astype(np.int64)
-        confid = np.round(df_results_tesseract.iloc[num]['conf'], 0)
-        rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
-        if confid < conf_threshold:
-            text_color = (0, 0, 0)
-        else:
-            text_color = (255, 255, 255)
+    if not df_results_tesseract.empty:
+        ind = nb_readers-1
+        for num, box_ in enumerate(df_results_tesseract['box'].to_list()):
+            box = np.array(box_).astype(np.int64)
+            confid = np.round(df_results_tesseract.iloc[num]['conf'], 0)
+            rgb_color = ImageColor.getcolor(dict_back_colors[confid], "RGB")
+            if confid < conf_threshold:
+                text_color = (0, 0, 0)
+            else:
+                text_color = (255, 255, 255)
 
-        list_reco_images[ind] = cv2.rectangle(list_reco_images[ind], (box[0][0], box[0][1]), \
-                                             (box[2][0], box[2][1]), rgb_color, -1)
-        list_reco_images[ind] = cv2.putText(list_reco_images[ind], \
-                                            df_results_tesseract.iloc[num]['text'], \
-                                            (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
-                                            cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+            list_reco_images[ind] = cv2.rectangle(list_reco_images[ind], (box[0][0], box[0][1]), \
+                                                (box[2][0], box[2][1]), rgb_color, -1)
+            list_reco_images[ind] = cv2.putText(list_reco_images[ind], \
+                                                df_results_tesseract.iloc[num]['text'], \
+                                                (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
+                                                cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
 
     return list_reco_images
 
@@ -625,7 +631,7 @@ if image_file is not None:
         col1.markdown("##### Original image")
         col1.image(list_images[0], width=500, use_column_width=True)
         col2.markdown("##### Hyperparameters values for detection")
-        hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=True)
+        hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", expanded=False)
 
         tabs = hyper_tabs.tabs(reader_type_list)
         with tabs[0]:
@@ -808,7 +814,7 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                                                horizontal=False)
             col2.markdown("##### Hyperparameters values for recognition")
             hyper_tabs = col2.expander("Choose hyperparameters values for each detecter:", \
-                                       expanded=True)
+                                       expanded=False)
 
             tabs = hyper_tabs.tabs(reader_type_list)
             with tabs[0]:
@@ -1025,20 +1031,21 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                         mime='text/csv',
                     )
 
-                with tab_tesseract:
-                    cols = st.columns([2,2,1])
-                    cols[0].markdown('#### Detected area')
-                    cols[1].markdown('#### with Tesseract')
-
-                    for row in st.session_state.df_results_tesseract.itertuples():
+                if not st.session_state.df_results_tesseract.empty:
+                    with tab_tesseract:
                         cols = st.columns([2,2,1])
-                        cols[0].image(row.cropped, width=150)
-                        cols[1].write(getattr(row, 'text'))
-                        cols[2].write("("+str(getattr(row, 'conf'))+"%)")
+                        cols[0].markdown('#### Detected area')
+                        cols[1].markdown('#### with Tesseract')
 
-                    st.download_button(
-                        label="Download Tesseract results as CSV file",
-                        data=convert_df(st.session_state.df_results),
-                        file_name='OCR_comparator_Tesseract_results.csv',
-                        mime='text/csv',
-                    )
+                        for row in st.session_state.df_results_tesseract.itertuples():
+                            cols = st.columns([2,2,1])
+                            cols[0].image(row.cropped, width=150)
+                            cols[1].write(getattr(row, 'text'))
+                            cols[2].write("("+str(getattr(row, 'conf'))+"%)")
+
+                        st.download_button(
+                            label="Download Tesseract results as CSV file",
+                            data=convert_df(st.session_state.df_results),
+                            file_name='OCR_comparator_Tesseract_results.csv',
+                            mime='text/csv',
+                        )
