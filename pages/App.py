@@ -11,7 +11,7 @@ from paddleocr import PaddleOCR
 from mmocr.utils.ocr import MMOCR
 import pytesseract
 from pytesseract import Output
-import sys
+import os
 from mycolorpy import colorlist as mcp
 from PIL import ImageColor
 
@@ -596,7 +596,7 @@ def update_font_scale(nb_col, dict_draw_reco):
 ####################################################################################################
 
 ##----------- Initializations -----------------------------------------------------------------------
-
+print("PID : ", os.getpid())
 
 st.title("OCR solutions comparator")
 st.markdown("##### *EasyOCR, PPOCR, MMOCR, Tesseract*")
