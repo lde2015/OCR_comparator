@@ -12,4 +12,3 @@ plotly
 plotly-express
 mmcv-full --no-binary mmcv-full
 pytesseract
-PyMuPDF==1.16.0
