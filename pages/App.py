@@ -190,6 +190,8 @@ def init_readers(list_params):
 def load_image(image_file):
     image_path = "img."+image_file.name.split('.')[-1]
     img = Image.open(image_file)
+    img_saved = img.save(image_path)
+    img = Image.open(image_file)
 
     img_saved = img.save(image_path)
 
@@ -285,13 +287,14 @@ def tesserocr_detect(_img, params):
     return tesserocr_boxes_coordinates
 
 ###
-def process_detect(image_path, list_images, _list_readers, list_params, color):
+@st.experimental_memo(show_spinner=False)
+def process_detect(image_path, _list_images, _list_readers, list_params, color):
 
     ## ------- EasyOCR Text detection
     with st.spinner('EasyOCR Text detection in progress ...'):
         easyocr_boxes_coordinates = easyocr_detect(_list_readers[0], image_path, list_params[0])
         # Visualization
-        easyocr_image_detect = draw_detected(list_images[0], easyocr_boxes_coordinates, \
+        easyocr_image_detect = draw_detected(_list_images[0], easyocr_boxes_coordinates, \
                                              color, 'None', 7)
     ##
 
@@ -299,7 +302,7 @@ def process_detect(image_path, list_images, _list_readers, list_params, color):
     with st.spinner('PPOCR Text detection in progress ...'):
         ppocr_boxes_coordinates = ppocr_detect(_list_readers[1], image_path)
         # Visualization
-        ppocr_image_detect = draw_detected(list_images[0], ppocr_boxes_coordinates, \
+        ppocr_image_detect = draw_detected(_list_images[0], ppocr_boxes_coordinates, \
                                            color, 'None', 7)
     ##
 
@@ -307,19 +310,19 @@ def process_detect(image_path, list_images, _list_readers, list_params, color):
     with st.spinner('MMOCR Text detection in progress ...'):
         mmocr_boxes_coordinates = mmocr_detect(_list_readers[2], image_path)
         # Visualization
-        mmocr_image_detect = draw_detected(list_images[0], mmocr_boxes_coordinates, \
+        mmocr_image_detect = draw_detected(_list_images[0], mmocr_boxes_coordinates, \
                                            color, 'None', 7)
     ##
 
     ## ------- Tesseract Text detection
     with st.spinner('Tesseract Text detection in progress ...'):
-        tesserocr_boxes_coordinates = tesserocr_detect(list_images[0], list_params[3])
+        tesserocr_boxes_coordinates = tesserocr_detect(_list_images[0], list_params[3])
         # Visualization
-        tesserocr_image_detect = draw_detected(list_images[0], tesserocr_boxes_coordinates, \
+        tesserocr_image_detect = draw_detected(_list_images[0], tesserocr_boxes_coordinates, \
                                                color, 'None', 7)
     ##
     #
-    list_images += [easyocr_image_detect, ppocr_image_detect, mmocr_image_detect, \
+    list_images = _list_images + [easyocr_image_detect, ppocr_image_detect, mmocr_image_detect, \
                     tesserocr_image_detect]
     list_coordinates = [easyocr_boxes_coordinates, ppocr_boxes_coordinates, \
                         mmocr_boxes_coordinates, tesserocr_boxes_coordinates]
@@ -551,7 +554,7 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
                                                 (box[2][0], box[2][1]), rgb_color, -1)
             list_reco_images[i] = cv2.putText(list_reco_images[i], list_texts[i][num], \
                                             (box[0][0],int(np.round((box[0][1]+box[2][1])/2,0))), \
-                                            cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 4)
+                                            cv2.FONT_HERSHEY_DUPLEX, font_scale, text_color, 2)
 
     # Add Tesseract process
     if not df_results_tesseract.empty:
@@ -575,7 +578,7 @@ def draw_reco_images(image, boxes_coordinates, list_texts, list_confid, dict_bac
     return list_reco_images
 
 ###
-def update_font_scale(nb_col, dict_draw_reco):
+def update_font_scale(nb_col, dict_draw_reco, reader_type_list):
     list_reco_images = draw_reco_images(**dict_draw_reco, \
                                         font_scale=st.session_state.font_scale_sld, \
                                         conf_threshold=st.session_state.conf_threshold_sld)
@@ -584,11 +587,18 @@ def update_font_scale(nb_col, dict_draw_reco):
         reco_columns = st.columns(nb_col, gap='medium')
         column_width = 400
         for i, col in enumerate(reco_columns):
-            column_title = '<p style="font-size: 20px;color:rgb(0,0,0);">Recognition with ' + \
-                            reader_type_list[i]+ '</p>'
+            if reader_type_list[i] == 'Tesseract':
+                column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                ">Recognition with ' + \
+                                reader_type_list[i] + \
+                                '<br>(with its own detector)</br></p>'
+            else:
+                column_title = '<p style="font-size: 20px;color:rgb(0,0,0); \
+                                ">Recognition with ' + \
+                                reader_type_list[i]+ '</p>'
+
             col.markdown(column_title, unsafe_allow_html=True)
             col.image(list_reco_images[i], width=column_width, use_column_width=True)
-
 
 
 ####################################################################################################
@@ -600,7 +610,8 @@ print("PID : ", os.getpid())
 
 st.title("OCR solutions comparator")
 st.markdown("##### *EasyOCR, PPOCR, MMOCR, Tesseract*")
-
+st.markdown("#### PID : " + str(os.getpid()))
+show_warning = st.empty()
 # Initializations
 with st.spinner("Initializations in progress ..."):
     reader_type_list, reader_type_dict, color, list_dict_lang, \
@@ -893,6 +904,7 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
             submit_reco = st.form_submit_button("Launch recognition")
 
         if submit_reco:
+            process_detect.clear()
 ##----------- Hightlight the detecter --------------------------------------
             show_detect.empty()
             with show_detect.container():
@@ -1003,7 +1015,7 @@ Use rectlar box to calculate faster, and polygonal box more accurate for curved 
                 submit_resize = st.form_submit_button("Refresh")
 
             if submit_resize:
-                update_font_scale(len(reader_type_list), dict_draw_reco)
+                update_font_scale(len(reader_type_list), dict_draw_reco, reader_type_list)
 
             st.subheader("Recognition details")
             with st.expander("Detailed areas", expanded=False):
