@@ -1,14 +1,3 @@
-# https://github.com/streamlit/streamlit/issues/5315
-easyocr
 streamlit
 opencv-python-headless==4.5.5.64
 Pillow
-mmdet
-mmocr
-paddleocr
-paddlepaddle
-mycolorpy
-plotly
-plotly-express
-mmcv-full --no-binary mmcv-full
-pytesseract
