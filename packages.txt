@@ -1,4 +1,0 @@
-libgl1
-cmake
-libssl-dev
-tesseract-ocr-all
