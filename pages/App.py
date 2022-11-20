@@ -2,9 +2,6 @@
     for the OCR Comparator app, histed on Hugging Face
 """
 import streamlit as st
-import cv2
-from PIL import Image, ImageColor
-import PIL
 
 st.set_page_config(page_title="OCR Comparator", layout="wide")
 
