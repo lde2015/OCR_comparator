@@ -1,5 +1,6 @@
 import streamlit as st
 
+st.set_page_config(page_title='OCR Comparator', layout ="wide")
 st.title("OCR solutions comparator")
 
 st.write("")
