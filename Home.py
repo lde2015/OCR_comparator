@@ -2,7 +2,16 @@ import streamlit as st
 
 st.set_page_config(page_title='OCR Comparator', layout ="wide")
 st.image('ocr.png')
-
+st.markdown(
+    """
+        <style>
+            .sidebar .sidebar-content {{
+                width: 375px;
+            }}
+        </style>
+    """,
+    unsafe_allow_html=True
+)
 st.write("")
 
 st.markdown('''#### OCR, or Optical Character Recognition, is a computer vision task, \
